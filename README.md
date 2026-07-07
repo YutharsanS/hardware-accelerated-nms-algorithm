@@ -1,2 +1,115 @@
 # bitonic-sorting-network-3dgs
 Attempt to implement a bitonic sorting network for the tile based rasterization step of 3D Gaussian Splatting pipeline.
+
+---
+
+# VHDL Development Workflow: GHDL & GTKWave
+
+This guide outlines the standard workflow for compiling, simulating, and viewing VHDL designs using open-source tools. 
+
+## Prerequisites
+Ensure all team members have the following installed and added to their system `PATH`:
+* **[GHDL](https://github.com/ghdl/ghdl):** The open-source VHDL compiler and simulator.
+* **[GTKWave](https://gtkwave.sourceforge.net/):** The waveform viewer.
+
+## Standard Directory Structure
+To keep the repository organized, please adhere to the following structure:
+```text
+├── src/           # VHDL design files (.vhd)
+├── tb/            # Testbench files (.vhd)
+├── Makefile       # Automation script
+└── README.md
+
+```
+
+## Step-by-Step Manual Workflow
+
+If you are running the tools manually from the command line, the workflow consists of four steps: Analyze, Elaborate, Run, and View.
+
+### 1. Analyze (Compile)
+
+First, analyze the design files and then the testbench. Order matters: dependencies must be analyzed before the files that instantiate them.
+
+```bash
+ghdl -a src/my_design.vhd
+ghdl -a tb/my_design_tb.vhd
+
+```
+
+### 2. Elaborate (Build)
+
+Elaborate the top-level entity (usually your testbench). This creates the executable for the simulation. *Note: Use the entity name, not the file name.*
+
+```bash
+ghdl -e my_design_tb
+
+```
+
+### 3. Run (Simulate)
+
+Run the simulation and generate a waveform file. We recommend using the `.ghw` (GHDL Waveform) format instead of `.vcd`, as it perfectly supports VHDL's complex data types (like records and multi-dimensional arrays).
+
+```bash
+ghdl -r my_design_tb --wave=wave.ghw
+
+```
+
+*Optional: To stop a continuous simulation at a specific time, append `--stop-time=100ns`.*
+
+### 4. View (GTKWave)
+
+Open the generated waveform file in GTKWave to verify your signals.
+
+```bash
+gtkwave wave.ghw
+
+```
+
+---
+
+## 🚀 Automated Workflow (Using Make)
+
+To avoid typing the commands above repeatedly, use the provided `Makefile`. Just open your terminal in the project root and run:
+
+* **`make`** or **`make all`**: Compiles everything, runs the simulation, and opens GTKWave automatically.
+* **`make clean`**: Removes all compiled object files and waveform data to keep the workspace clean before committing to Git.
+
+### Template Makefile
+
+*(Create a file named `Makefile` in the root directory and paste this)*
+
+```makefile
+# --- Configuration ---
+# Top level entity (your testbench name)
+TOP = my_design_tb
+
+# Source and Testbench directories
+SRC_DIR = src
+TB_DIR = tb
+
+# Files to compile (order matters: design first, then tb)
+FILES = $(SRC_DIR)/my_design.vhd $(TB_DIR)/my_design_tb.vhd
+
+# Waveform output file
+WAVE = wave.ghw
+
+# --- Targets ---
+.PHONY: all clean
+
+all: $(WAVE)
+	gtkwave $(WAVE) &
+
+$(WAVE): $(FILES)
+	@echo "==> Analyzing files..."
+	ghdl -a $(FILES)
+	@echo "==> Elaborating top entity..."
+	ghdl -e $(TOP)
+	@echo "==> Running simulation..."
+	ghdl -r $(TOP) --wave=$(WAVE)
+
+clean:
+	@echo "==> Cleaning up..."
+	ghdl --clean
+	rm -f $(WAVE) work-obj93.cf
+
+```
