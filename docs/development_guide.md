@@ -1,8 +1,3 @@
-# bitonic-sorting-network-3dgs
-Attempt to implement a bitonic sorting network for the tile based rasterization step of 3D Gaussian Splatting pipeline.
-
----
-
 # VHDL Development Workflow: GHDL & GTKWave
 
 This guide outlines the standard workflow for compiling, simulating, and viewing VHDL designs using open-source tools. 
@@ -16,10 +11,8 @@ Ensure all team members have the following installed and added to their system `
 To keep the repository organized, please adhere to the following structure:
 ```text
 ├── src/           # VHDL design files (.vhd)
-├── tb/            # Testbench files (.vhd)
+├── test/          # Testbench files (.vhd)
 ├── Makefile       # Automation script
-└── README.md
-
 ```
 
 ## Step-by-Step Manual Workflow
