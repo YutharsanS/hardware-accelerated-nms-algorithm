@@ -18,7 +18,7 @@ Before creating a PR, execute these steps:
    - `refactor:` for code restructuring
    - `test:` for test additions
    - `chore:` for maintenance
-4. Fetch the task list from the issue number provided by $ARGUMENTS (if thre are any)
+4. Fetch the task list from the issue number provided by $ARGUMENTS (if thee are any) and report if there are incomplete tasks.
 5. Generate PR summary in a human reviewer friendly manner including:
    - What changed
    - Why it changed
