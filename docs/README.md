@@ -18,3 +18,12 @@ bitonic-sorting-network-3dgs/
 └── LICENSE           # Open-source license documentation.
 
 ```
+
+## Claude Skills
+
+This repository defines shared Claude Code skills under `.claude/skills/` so that agentic developers follow consistent commit and PR practices.
+
+- **`/commit`** — Reviews the current git status/diff and creates a single commit, following the [Conventional Commits](https://www.conventionalcommits.org/) format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Accepts an optional message argument to use verbatim instead of generating one.
+- **`/pr`** — Prepares a pull request: reviews and stages changes, ensures a conventional commit exists, fetches the task list from a linked GitHub issue number (passed as an argument), and generates a reviewer-friendly PR summary covering what changed, why, testing performed, and potential impacts.
+
+Usage: run `/commit` or `/commit <message>` to create a commit, and `/pr <issue-number>` to prepare a pull request linked to that issue.
