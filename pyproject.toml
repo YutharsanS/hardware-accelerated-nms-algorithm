@@ -2,7 +2,7 @@
 name = "hardware-accelerated-nms-algorithm"
 version = "0.1.0"
 description = "Hardware-accelerated NMS algorithm: VHDL RTL + Python golden model + dev tooling"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
