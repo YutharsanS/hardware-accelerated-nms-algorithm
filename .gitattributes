@@ -1,0 +1,5 @@
+# Strip Jupyter notebook outputs/metadata before they hit git history.
+# Requires each contributor to run the one-time setup in
+# docs/development_guide.md ("Notebook output stripping (nbstripout)").
+*.ipynb filter=nbstripout
+*.ipynb diff=ipynb

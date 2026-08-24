@@ -106,3 +106,24 @@ clean:
 	rm -f $(WAVE) work-obj93.cf
 
 ```
+
+---
+
+## Notebook output stripping (nbstripout)
+
+The `models/` directory holds Python "golden model" notebooks (see `docs/README.md`). Executed notebooks embed cell outputs (plots, large data dumps) directly in the `.ipynb` JSON, which bloats the git history with binary-ish diffs every time a notebook is re-run. This repo uses [`nbstripout`](https://github.com/kynan/nbstripout) to strip outputs and execution metadata from `.ipynb` files at commit time, via the `filter=nbstripout` rule in `.gitattributes`.
+
+The filter is a per-clone git config, so each contributor must install it once after cloning:
+
+```bash
+pip install -r requirements-dev.txt
+nbstripout --install --attributes .gitattributes
+```
+
+This registers the filter in your local `.git/config`; it is not committed, which is why every contributor needs to run it themselves. After that, `git add`/`git commit` on any `.ipynb` file automatically strips outputs before they reach the commit — your working copy in Jupyter still shows outputs normally.
+
+To check the filter is active:
+
+```bash
+nbstripout --status
+```
