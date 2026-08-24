@@ -52,3 +52,11 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# =========================
+# Python (uv)
+# =========================
+
+.venv/
+__pycache__/
+*.pyc
