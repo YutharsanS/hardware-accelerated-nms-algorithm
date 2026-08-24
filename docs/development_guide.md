@@ -106,3 +106,36 @@ clean:
 	rm -f $(WAVE) work-obj93.cf
 
 ```
+
+---
+
+## Python tooling (uv)
+
+Python dev tooling (currently just `nbstripout`; formatters like Ruff/Black will join it here per `scripts/`) is managed at the repo root with [`uv`](https://docs.astral.sh/uv/). `pyproject.toml` and `uv.lock` are committed; the `.venv/` uv creates is not (see `.gitignore`).
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then from the repo root:
+
+```bash
+uv sync
+```
+
+This creates `.venv/` and installs everything in the `dev` dependency group. Run any tool through it with `uv run <tool>` (e.g. `uv run nbstripout --status`), or activate `.venv` directly.
+
+## Notebook output stripping (nbstripout)
+
+The `models/` directory holds Python "golden model" notebooks (see `docs/README.md`). Executed notebooks embed cell outputs (plots, large data dumps) directly in the `.ipynb` JSON, which bloats the git history with binary-ish diffs every time a notebook is re-run. This repo uses [`nbstripout`](https://github.com/kynan/nbstripout) to strip outputs and execution metadata from `.ipynb` files at commit time, via the `filter=nbstripout` rule in `.gitattributes`.
+
+The filter is a per-clone git config, so each contributor must install it once after cloning:
+
+```bash
+uv sync
+uv run nbstripout --install --attributes .gitattributes
+```
+
+This registers the filter in your local `.git/config`, pointing at the `.venv` python; it is not committed, which is why every contributor needs to run it themselves. After that, `git add`/`git commit` on any `.ipynb` file automatically strips outputs before they reach the commit — your working copy in Jupyter still shows outputs normally.
+
+To check the filter is active:
+
+```bash
+uv run nbstripout --status
+```
