@@ -8,4 +8,33 @@ dependencies = []
 [dependency-groups]
 dev = [
     "nbstripout>=0.9.1",
+    "ruff>=0.16.4",
 ]
+
+[tool.ruff]
+force-exclude = true
+
+extend-exclude = [
+    ".vscode",
+    "/usr/lib/python3.12",
+    ".venv"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test_*.py" = ["S101", "D"]
+"*_test.py" = ["S101", "D"]
+"tests/**/*.py" = ["S101", "D"]
+"notebooks/**/*.ipynb" = ["T201", "D"]
+
+[tool.ruff.lint]
+extend-select = [
+    "D",    # Pydocstyle – docstring formatting
+    "COM",  # Flake8-commas – trailing/comma issues
+    "T201", # Flake8-print - print statement
+    "ANN", # Flake8-annotations – enforces type annotation style
+]
+
+ignore = ["D100", "COM812"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
