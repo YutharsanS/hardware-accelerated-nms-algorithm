@@ -222,3 +222,79 @@ still matches, coordinates and quantised scores alike.
 takes about half a minute. Acceptable for now — running the real gate every time is worth
 it — but if it grows further the sweep should move behind a `slow` marker with a reduced
 default count.
+
+---
+
+### B1.3 — verification vectors                                         2026-09-04
+
+**Built:** `models/nms/vectors.py` (writer, reader and round-trip support),
+`models/nms/__main__.py` (CLI: `uv run python -m models.nms vectors`), and 125 files in
+`models/data/vectors/` covering 20 cases. Six file types per case, all fixed-width hex
+separated by whitespace so a testbench needs only `readline` plus successive `hread` —
+no comment stripping, no tokenising. Human-readable notes go to a `.txt` nothing parses.
+
+| file | contents |
+|---|---|
+| `.hex` | 32 records (16 hex) then `present_mask` (8 hex) |
+| `.mask` | expected `keep_mask` (8 hex) |
+| `.keys` | 21-bit sort key per slot, input order (6 hex) |
+| `.order` | expected rank-to-slot table (2 hex per rank) |
+| `.trace` | per-rank resolve state: `rank slot kept row valid keep` |
+| `.pairs` | explicit IoU lane stimulus and expected result (5 cases) |
+
+**Gate:** every case round-trips through re-parsing, and its `.mask` matches the model.
+
+**Result:** **PASS** — 135 tests in ~29 s. Round trip exact for all 20 cases; `.mask`
+verified against *both* model forms, so no file is blessed by a single implementation.
+
+**Two real defects found — by a test written to catch exactly this.** A case can pass every
+round-trip check while testing nothing, so `test_vectors.py` asserts that each case
+contains the hazard it is named for. It immediately caught:
+
+1. **`low_res_scores` triggered zero suppressions.** Spacing 70 against size 90 gives
+   IoU 0.125, far below the 0.5 threshold. The case was full of ties, but with nothing
+   ever suppressed the tie order never decided anything — it was testing nothing at all.
+   Fixed to spacing 25: adjacent pairs now well above threshold, pairs two apart below,
+   so the outcome genuinely depends on tie-breaking. **0 → 104 suppressions**, survivors
+   32 → 13.
+2. **`all_survive` was byte-identical to `disjoint`** — `case_all_survive()` simply
+   returned `case_disjoint()`. Two names, one case, and the more interesting path
+   untested. `all_survive` now overlaps *below* threshold, so rows are computed and come
+   back empty (95 intersecting pairs, 0 suppressions), which is a different path from
+   `disjoint`'s complete absence of overlap (0 intersecting).
+
+**Case audit after the fixes** — every case now demonstrably carries its hazard:
+
+```
+case             intersect  suppress  boundary  dup-scores  zero-area  survivors
+all_equal              496       810         0          31          0          2
+all_survive             95         0         0           0          0         32
+boundary                 4         6         2           0          0         29
+degenerate               0        42         0           0          7         26
+disjoint                 0         0         0           0          0         32
+low_res_scores         358       104         0           3          0         13
+notebook32              94       188         0           0          0          7
+ties                   112       224         0          29          0          4
+```
+
+`degenerate` showing 0 intersecting but 42 suppressing is correct and worth noting: zero-
+area boxes give `I = 0, U = 0`, hence `0 >= 0` and suppression, which is the specified
+behaviour from architecture.md section 7 being exercised.
+
+**Areas are written as explicit inputs in `.pairs`, not recomputed by the testbench.** The
+lane receives them precomputed from `box_store`, and a testbench that derived them itself
+would duplicate the clamp logic it is meant to be checking — a shared mistake would then
+cancel out instead of failing.
+
+**Two `present_mask` variants added** (`partial_present` = `0x0000FFFF`, `none_present` =
+`0x00000000`) since the batch generators produce all-present batches only, and an absent
+slot must provably never survive.
+
+**Staleness guard:** the vectors are committed so a clean checkout can run the testbenches,
+so a test regenerates them into a temporary directory and asserts the committed copies are
+byte-identical. Without it, changing the generator would silently leave the RTL verified
+against stale expectations.
+
+**Size:** 724 kB in 125 files, of which `.pairs` is 240 kB. Written for 5 cases rather than
+all 20 — all 20 would be ~900 kB of largely redundant rows, and the Python property test
+covers the remainder.

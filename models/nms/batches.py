@@ -183,20 +183,35 @@ def case_disjoint() -> list[Box]:
 
 
 def case_all_survive() -> list[Box]:
-    """The worst case for cycle count: nothing is suppressed, so every box is a keeper."""
-    return case_disjoint()
+    """Boxes that overlap but stay *below* the threshold, so every one survives.
 
-
-def case_low_res_scores(rng: random.Random) -> list[Box]:
-    """Overlapping boxes with only 8 bits of score resolution.
-
-    At 8-bit resolution, 32 draws from 256 values collide with probability about 86%, so
-    ties are the common case rather than an edge case. This is what a real detector with a
-    coarse confidence output would produce.
+    Distinct from :func:`case_disjoint`, which has no overlap at all. Here the lanes
+    compute a non-zero intersection for many pairs and every suppression row still comes
+    back empty, exercising the "row computed, nothing fires" path rather than the trivial
+    "no overlap" one. Spacing 70 against size 90 gives IoU 0.125, comfortably under 0.5.
     """
     boxes = []
     for i in range(p.N):
         cx, cy = 50 + (i % 6) * 70, 50 + (i // 6) * 70
+        boxes.append(Box(cx, cy, cx + 90, cy + 90, p.SCORE_MAX - i))
+    return boxes
+
+
+def case_low_res_scores(rng: random.Random) -> list[Box]:
+    """Tightly overlapping boxes with only 8 bits of score resolution.
+
+    At 8-bit resolution, 32 draws from 256 values collide with probability about 86%, so
+    ties are the common case rather than an edge case. This is what a real detector with a
+    coarse confidence output would produce.
+
+    The spacing must be tight enough that suppression actually happens: at spacing 70 with
+    size 90 the IoU is 0.125 and nothing fires, so the case would exercise no tie-breaking
+    at all despite being full of ties. Spacing 25 gives adjacent IoU well above 0.5 while
+    boxes two apart stay below it, so the outcome genuinely depends on tie order.
+    """
+    boxes = []
+    for i in range(p.N):
+        cx, cy = 50 + (i % 6) * 25, 50 + (i // 6) * 25
         coarse = rng.randrange(0, 256) * 257  # 8 significant bits, spread over 16
         boxes.append(Box(cx, cy, cx + 90, cy + 90, coarse))
     return boxes
