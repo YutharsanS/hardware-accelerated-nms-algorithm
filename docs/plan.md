@@ -1,74 +1,179 @@
-# NMS accelerator: every open question answered, spec frozen, sorter + IoU lane built
+# Bitonic sorting network for 3D Gaussian Splatting — exploration plan
 
-**Read in this order** (labels are kept stable because they are cross-referenced throughout):
+## Why this plan changed
+
+The project was scoped as an NMS accelerator. Fully specifying it — and then measuring rather than
+assuming — showed the premise does not hold:
+
+- **There is no bottleneck to remove.** At N=32 a CPU does NMS in **47 µs = 0.14% of a 33 ms frame**
+  (measured on this machine, i5-13500H).
+- **The accelerator makes the system slower.** Behind the UART: 868 µs versus the CPU's 83 µs — a
+  **10× regression**. Transfer is O(N) at 20 µs/box while CPU compute is O(N²) at 0.067 µs/pair, so
+  no baud rate fixes it; the crossover is N ≈ 600, well past what the board holds.
+- **It does not even win on energy.** At a 0.003% duty cycle the XC7A35T's static power (~7–16 mJ
+  per frame) dwarfs the ~0.5 mJ the CPU spends on the NMS.
+
+Meanwhile this repository is named `bitonic-sorting-network-**3dgs**`, and in 3D Gaussian Splatting
+the sort genuinely dominates: [GSCore (ASPLOS 2024)](https://dl.acm.org/doi/10.1145/3620666.3651385)
+measures the sorting stage at **up to 90.8% of GPU bandwidth** and builds its Sorting Unit on **a
+bitonic network**; [REACT3D](https://dl.acm.org/doi/10.1145/3725843.3756109) and
+[STREAMINGGS](https://arxiv.org/pdf/2506.09070) do the same. And a **full sort is architecturally
+required** there — alpha blending must proceed front-to-back — so the sorter-versus-argmax tension
+that undermined the NMS design disappears.
+
+**So: Part 0 gathers this project's own 3DGS data before committing.** The Appendix keeps the NMS
+design intact — its sorter half transfers unchanged, and its measurements are the evidence for
+pivoting.
 
 | § | What it settles |
 |---|---|
-| Context | What was wrong in the original plan, not merely open |
-| Part 1 | Answers to all ~24 questions the original plan posed |
-| Part 1a | Bitonic sort vs masked argmax — space and time (superseded verdict, kept as evidence) |
-| Part 1e | **Can we beat a CPU? Measured. The restructure that makes the answer yes** |
-| Part 1d | Worst-case time complexity of the adopted design |
-| Part 1b | Real-time: yes, at 1 Mbaud |
-| Part 1c | Input and output, end to end |
-| Part 2 | **The frozen spec** — wire format, widths, architecture, area budget |
-| Part 3 | Work plan: Phase A (spec + model), B (sorter + **Vivado timing gate**), C1 (one lane) |
-| Part 4 | What is guaranteed / estimated / unknown, plus 11 pitfalls and 8 named loopholes |
-| Part 5 | Minor decisions left |
-| Part 6 | **Critical evaluation record — 15 claims that were wrong, and what replaced them** |
-| Verification | How every claim gets checked |
+| **Part 0** | **3DGS exploration — the live work. Seven Python files, 2–3 days, no RTL.** |
+| Appendix | The complete NMS design: frozen spec, all-pairs architecture, 11 pitfalls, 8 loopholes, and the critical evaluation record. Reusable and retained as evidence. |
 
-**Start here — the first three things, in order.** This document is long because it is a decision
-record as well as a plan; do not try to hold all of it at once.
+**Start here — three steps, in order.**
 
-1. **A1–A3**: freeze the spec in architecture.md, then write `nms_params.py` and `nms_model.py`.
-   Nothing else can be correct until these are.
-2. **B2–B3**: `cas.vhd` then `bitonic32.vhd`, each with its testbench. This is the first RTL and it
-   proves the GHDL flow end to end.
-3. **B5**: run `scripts/synth.tcl` on the sorter alone. It settles the plan's weakest claim (timing)
-   before anything is built on top of it.
+1. **0.1–0.3**: load a pretrained 3DGS `.ply`, reimplement the projection and tile assignment in
+   numpy, then *validate it by rendering an image*. Everything downstream is worthless if the
+   projection is subtly wrong.
+2. **0.4 and 0.6**: the per-tile histogram and the early-termination analysis. Between them they
+   choose `N` and decide whether a full sort is even the right primitive.
+3. **Decide the pivot** from the table at the end of Part 0. If it goes ahead, the Appendix's sorter
+   work (`cas`, `bitonic32`, `PIPE_CUTS`, folded fallback, the Vivado gate strategy, the VHDL-93
+   language policy) is reused with `(depth, index)` keys.
 
-Everything after that is sequenced in Part 3.
+**Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
+`get_parts xc7a35tcpg236-1` returns 1 — every synthesis gate in either direction depends on it, and
+the install carries only an Alveo licence.
 
-## Context
+## Part 0 — 3DGS exploration: gather the data, then decide the pivot
 
-This document replaces the earlier de-risking plan (recoverable as
-`git show 995276e:docs/plan.md`), which posed ~24 open questions and left each one for the team to
-derive. All of them are answered here, and the answers are the plan.
+> **The project direction is under review.** Measurement showed the NMS framing accelerates a
+> non-bottleneck: at N=32 a CPU does NMS in **47 µs = 0.14% of a 33 ms frame**, and behind the UART
+> the accelerated system is **10× slower** than not accelerating at all. Meanwhile the repository is
+> named `bitonic-sorting-network-**3dgs**`, and in 3D Gaussian Splatting the sort *is* the
+> bottleneck — [GSCore (ASPLOS 2024)](https://dl.acm.org/doi/10.1145/3620666.3651385) measures the
+> sorting stage at **up to 90.8% of GPU bandwidth**, builds its Sorting Unit on **a bitonic network**,
+> and [REACT3D](https://dl.acm.org/doi/10.1145/3725843.3756109) and
+> [STREAMINGGS](https://arxiv.org/pdf/2506.09070) do the same.
+>
+> **Parts 1–6 below stay intact and on hold.** Everything in them about the sorter — `cas`,
+> `bitonic32`, `PIPE_CUTS`, the folded fallback, the sort-keys-not-payloads insight, tie-breaking by
+> index, the Yosys→Vivado gate strategy, the bit-exact verification discipline — transfers unchanged
+> to a 3DGS depth sorter. Only the key changes, from `(score, index)` to `(depth, index)`, and only
+> the IoU/NMS datapath would be dropped.
 
-Reviewing that earlier plan against the repo also turned up things that were wrong, not merely open:
+### Why data first
+
+The papers give the *shape* of the problem, not this project's numbers. Two findings in particular
+must be measured before choosing an architecture:
+
+- The reference renderer assigns each splat-tile instance a **64-bit key — low 32 bits depth, high
+  bits tile index** — over **16×16 pixel tiles**, and resolves all ordering in **one CUB radix sort**
+  (2.5–4.2 ms per frame at 4K). Per-tile *hierarchical* sorting is GSCore's key optimisation, and a
+  tile holds on the order of 10²–10³ Gaussians — the size a Basys 3 can actually own.
+- The literature reports Gaussians-per-tile varying by **two orders of magnitude**, which makes
+  *fixed-parallelism* sorting modules idle on small tiles and bottleneck on large ones. **A bitonic
+  network is exactly a fixed-parallelism sorter.** That tension is the project's real research
+  question, and answering it needs the actual histogram.
+
+**Hardware constraint:** this machine has **no NVIDIA GPU** (Intel Iris Xe only), so the CUDA
+reference rasterizer cannot be run. The exploration therefore reimplements the rasterizer's
+*preprocess* stage in numpy — which is the right tool anyway, since that code doubles as the golden
+model for the eventual RTL.
+
+### Phase 0 deliverables
+
+| # | File | Action |
+|---|---|---|
+| 0.1 | `models/gs/load_ply.py` | Parse a pretrained 3DGS `.ply` with numpy — binary little-endian, properties `x,y,z`, `opacity`, `scale_0..2`, `rot_0..3` (skip `f_dc_*`/`f_rest_*`; only geometry and opacity are needed). Read the ASCII header, then one structured-dtype `fromfile`. No `torch`, no `plyfile` dependency required. |
+| 0.2 | `models/gs/project.py` | Reimplement the reference preprocess: world→camera transform, frustum cull, perspective-project the means, build the 3D covariance from scale + rotation quaternion, project to 2D covariance through the projection Jacobian (EWA splatting), take the 3σ screen-space radius, and emit `(tile_id, depth, gaussian_index)` instances over a 16×16 tile grid. |
+| 0.3 | `models/gs/validate.py` | **Correctness gate — the histogram is worthless if the projection is wrong.** Two checks: (a) mean tiles-touched per Gaussian should land in the published ~5–20 range; (b) render a low-resolution image (e.g. 400×300) by actually alpha-blending the sorted per-tile lists, and compare against the scene's reference view. If the image looks like the scene, the projection and tile assignment are right. |
+| 0.4 | `models/gs/tile_stats.py` | **The headline artifact.** Histogram of instances per tile, across several camera poses. Plus a **coverage table**: for N ∈ {32, 64, 128, 256, 512, 1024}, what fraction of *tiles* fit in N, and what fraction of *instances* those tiles hold. This is what picks N. |
+| 0.5 | `models/gs/sort_cost.py` | Measured CPU baseline on this machine: per-tile `argsort` summed over tiles, versus one global `lexsort` on the composite 64-bit key. Sanity-check the global figure against the published 2.5–4.2 ms @4K. |
+| 0.6 | `models/gs/early_term.py` | **The partial-sort question.** Walk each tile front-to-back accumulating transmittance `T *= (1-α)` and record how many Gaussians are consumed before `T < 1e-4` (the reference threshold). If tiles typically saturate after a small fraction of their list, **a full sort is wasteful and a top-K/partial sorter is the better architecture** — which would change the RTL substantially. |
+| 0.7 | `models/gs/key_width.py` | Feeds the area model directly: how much depth precision is needed before ordering artifacts appear (reference uses 32-bit float — can 16-bit fixed do?), plus index width = `ceil(log2(max instances))`. Total key width sets the CAS width, which sets LUT cost via the existing `8 + 2·⌈W/2⌉` model. |
+
+**Inputs needed:** one pretrained 3DGS scene `.ply` (a Tanks & Temples scene such as `truck` is ~1M
+Gaussians / ~250 MB; Mip-NeRF 360 scenes are larger). 27 GB free is ample. Camera poses come from
+the scene's `cameras.json` if shipped, otherwise construct a view looking at the point-cloud
+centroid.
+
+### The decision Phase 0 produces
+
+| question | answered by | feeds |
+|---|---|---|
+| What `N` should the sorting network target? | 0.4 coverage table | sorter size, area budget |
+| Pad-to-`N`, bucket by size, or hybrid? | 0.4 histogram variance | architecture choice |
+| Full sort, or top-K / partial? | 0.6 early-termination | whether the bitonic network is even the right primitive |
+| Key width, hence CAS width and LUT cost | 0.7 | the Part 1 area model, reused verbatim |
+| Is the FPGA competitive at all? | 0.5 vs the cycle model | go / no-go on the whole pivot |
+
+**Cost: 2–3 days**, all Python, no RTL, no hardware. It either justifies the pivot with this
+project's own numbers or kills it cheaply — and 0.2 becomes the golden model either way.
+
+---
+
+---
+
+# Appendix — the NMS design, complete and on hold
+
+Everything below specifies the NMS accelerator in full: 24 answered questions, a frozen wire format
+and datapath, an all-pairs architecture verified equivalent over 20,000 batches, and a critical
+evaluation record. It is retained for two reasons.
+
+**It is reusable.** The sorter half — `cas`, `bitonic32`, the `PIPE_CUTS` study, the folded fallback,
+sort-keys-not-payloads, tie-breaking by index, the Yosys→Vivado gate strategy, the VHDL-93 language
+policy and the bit-exact verification discipline — transfers to a 3DGS depth sorter unchanged. Only
+the key changes, from `(score, index)` to `(depth, index)`; only the IoU datapath is dropped.
+
+**It is the evidence for the pivot.** The measurements that killed the NMS framing are in Part 1e
+and Part 6, and a report needs them stated rather than quietly dropped.
+
+## A0 — What was wrong in the original NMS plan
+
+The predecessor document (`git show 995276e:docs/plan.md`) posed ~24 open questions and left each one
+for the team to derive. All of them are answered in Part 1 below, and the answers became the plan.
+
+Reviewing it against the repo also turned up things that were wrong, not merely open:
 
 - **The §2 "width disagreement" does not exist.** [architecture.md](architecture.md)'s
   11-bit figure is an intermediate minimum-width derivation that the same paragraph rejects in
   favour of "2 coordinate points (2 × 24 bits) + 16-bit confidence = 64 bits" — i.e. **12 bits per
   coordinate**, exactly what the notebook uses. The specs already agree, so §2's 11-bit
   re-derivation exercise is homework against a format nobody chose.
-- **Zero spare bits follow** (4×12 + 16 = 64), so the original plan's Context records an unimplementable
+- **Zero spare bits follow** (4×12 + 16 = 64), so plan.md's Context records an unimplementable
   decision: "echo records back using one of the 4 spare bits as the keep flag."
-- **The original plan attributes O(1)/O(n) complexity claims to the proposal.** The current proposal text
+- **plan.md attributes O(1)/O(n) complexity claims to the proposal.** The current proposal text
   makes no such claim — its only complexity statement is `O(N²)` for the software baseline. §1's
   framing is stale.
 - architecture.md contradicts itself: the record carries a **16-bit** score, but a later line says
   "confidence variables: **8 bits**". The notebook's table gives `T_INT` a range of "0 to 126" while
   the project's own 0.5 threshold is `T_INT = 128`.
-- Tooling: GHDL 4.1.0 + GTKWave installed for simulation. `/opt/oss-cad-suite` has **Yosys 0.67 +
-  `ghdl.so`** as a fast local area loop. **Vivado is available and will be used** (user's decision) —
-  so every area and timing gate is authoritative rather than advisory, and **Fmax moves out of
-  "unknowable until hardware" into a Phase B measurement.** That matters: P1 (the 2-cut timing claim)
-  is the weakest load-bearing estimate in this plan, and it can now be settled before the FSM is
-  written instead of at the end.
+- Tooling, verified on this machine: GHDL 4.1.0 + GTKWave for simulation; `/opt/oss-cad-suite` has
+  **Yosys 0.67 + `ghdl.so`** as an optional fast area loop; **Vivado ML 2026.1 at
+  `~/Vivado/2026.1`** (Vitis alongside it), with the **full Artix-7 device database installed**
+  (207 MB, `xc7a35t_cpg236` present). Host is a 13th-gen i5, 12 physical cores, 16 GB — comfortable
+  for an XC7A35T build.
+  - **Vivado is not on `PATH`** — every script must `source ~/Vivado/2026.1/Vivado/settings64.sh`
+    first.
+  - The detected licence is an **Alveo** one; Artix-7 35T is a no-charge device in Vivado ML
+    Standard, so this should be irrelevant, but **B0 confirms it in 30 seconds** before anything is
+    built on the assumption.
+  - Consequence, unchanged from the earlier decision: every area and timing gate is authoritative
+    rather than advisory, and **Fmax moves out of "unknowable until hardware" into a Phase B
+    measurement**, settling P1 — the weakest load-bearing estimate here — before the FSM is written.
 
 ---
 
-## Part 1 — Answers to every question in the original plan
+## Part 1 — Answers to every question in the original NMS plan
 
 ### §1 Sorting
 
 **Q1. Confirm the CAS/area/Fmax estimates.** Confirmed. A CAS is a 16-bit carry-chain compare
 (≈8 LUT6) plus two W-bit 2:1 swap muxes; `sel` is shared so two mux bits pack into one LUT6 →
-`8 + 2·⌈W/2⌉`. At W=21 that is **30 LUT6**, ×240 = **7,200 LUT = 34.6%** — the original plan's estimate is
+`8 + 2·⌈W/2⌉`. At W=21 that is **30 LUT6**, ×240 = **7,200 LUT = 34.6%** — plan.md's estimate is
 right. Fmax: 15 levels × (carry compare + mux + routing ≈ 1.5–2.5 ns) ≈ **22–37 ns → 27–45 MHz**.
-it guessed ~20 MHz; either way **the pure combinational network will not close 100 MHz.**
+plan.md guessed ~20 MHz; either way **the pure combinational network will not close 100 MHz.**
 
 **Q2. "Fully pipelined" (§2) or "purely combinatorial" (§3.1)?** Neither, and this is the sharpest
 consequence of Q1. Ship a **combinational network with 2 internal register cuts** (after sub-stages
@@ -100,9 +205,9 @@ Full derivation in Part 1a; the build decision is deferred to after C4.
 **Q6. Which products are per-pair, what is the real per-lane DSP cost, and what P follows?**
 `area1`/`area2` are **per-box, not per-pair** — precompute all 32 once with one shared DSP over 32
 cycles. Only `w×h` is genuinely per-pair (1 DSP, 12×12). `T_INT×U` is **0 DSP**, because the
-threshold is a fixed synthesis-time generic (user's decision) and `T_INT=128` collapses the
+threshold is a fixed synthesis-time generic (decided) and `T_INT=128` collapses the
 predicate to `2I ≥ U` — two shifts and a compare. So a lane is **1 DSP, not 3** → `P + 1` total, and
-**P=32 costs 33 of 90 DSPs.** the original plan's "97 DSPs, does not fit" is wrong by 3×. **DSPs are not the binding constraint; LUTs and payload fan-out
+**P=32 costs 33 of 90 DSPs.** plan.md's "97 DSPs, does not fit" is wrong by 3×. **DSPs are not the binding constraint; LUTs and payload fan-out
 are.** Worst-case cycles for the **keeper-serial** structure this question assumed
 (`32 areas + 3 sort + 32·(32/P + L + 1) + ≤32 scan`, L=4):
 
@@ -129,16 +234,25 @@ whole width table is correct as it stands for 12-bit coordinates.
 **Q10. Board.** **Basys 3 / XC7A35T** (20,800 LUT, 41,600 FF, 90 DSP, 100 MHz on pin W5). Fix
 "Nexys A7" in the proposal.
 
-**Q11. The `2^k` row.** It is a **shift, not a stored value** — delete the row. `T_INT` is u8,
-**0 to 255** (not "0 to 126"), default **128** = IoU 0.5.
+**Q11. The `2^k` and `T_INT` rows.** Two separate corrections, and they concern different things —
+a *value* and a *field range*:
+
+- **`2^k` is not a signal.** `k = 8` is a shift amount compiled into the RTL as `I << 8`. Nothing
+  stores it, so **delete the row**. The notebook lists it as an 8-bit value, which is wrong twice
+  over: you do not store it, and 2⁸ = 256 would need 9 bits if you did.
+- **`T_INT` value = 128.** Q0.8 fixed point, so the threshold is `T_INT / 2⁸ = 128/256 = 0.5`. This
+  is the number used everywhere else in this document.
+- **`T_INT` field = u8, range 0 to 255** — what the 8-bit width *can hold*, i.e. thresholds from 0 to
+  255/256 ≈ 0.996. The notebook's "0 to 126" is wrong as a range, and worse, it **excludes the
+  project's own threshold**: 128 does not fit in a field declared 0–126.
 
 **Q12. Re-derive the 11-bit case.** Moot, but for completeness: area 22 b, union 23 b, LHS 30 b,
-**RHS 31 b** — the original plan's hint that it is "not 33" was right, for a format that was never chosen.
+**RHS 31 b** — plan.md's hint that it is "not 33" was right, for a format that was never chosen.
 
 **Q13. Is stealing a coordinate bit the cheapest flag?** **No — the cheapest flag is not in the
 record at all.** A separate 4-byte mask costs 1.5% of the frame, keeps 12-bit fields nibble-aligned
 (plain byte slicing on both sides), and removes output reordering entirely (Q-D5). Stealing a bit
-would force byte-crossing shift-and-mask in both Python and VHDL — the original plan's own named bug source.
+would force byte-crossing shift-and-mask in both Python and VHDL — plan.md's own named bug source.
 
 **Q14. Corner convention.** Adopt the notebook's: **`(x,y)` lower-left, `(a,b)` upper-right, y
 increasing upward**. Image pipelines usually emit y-down; IoU is invariant under a global y-flip, so
@@ -156,8 +270,8 @@ that input. The generator must emit these cases (`degenerate` vector set).
 frees the field. Floats never enter the vector files. Order-preserving for 2-decimal inputs.
 
 **Q17. Class labels.** **Single-class detector, declared as an explicit scope limit in the report**
-(user's decision). The record gains no class ID and the 64-bit layout stands. The report must say
-this outright — real NMS runs per class, and leaving the omission unmentioned is what the original plan's §2
+(decided). The record gains no class ID and the 64-bit layout stands. The report must say
+this outright — real NMS runs per class, and leaving the omission unmentioned is what plan.md §2
 warns against. Note the escape hatch for anyone extending it: 4 bits carved from the score gives 16
 classes, and the FSM re-runs per class in 16 × 0.72 µs = 12 µs, still trivial against 2.70 ms of
 link time.
@@ -206,7 +320,7 @@ rather than a control dependency.
 ### §5 System-level claim
 
 **Q22. Compute-bound or I/O-bound, and by what factor?** **I/O-bound by ~6,400×** *at the 115200
-baseline the question assumes — but the conclusion I first drew from it was wrong, and Part 1b
+baseline the question assumes — but the conclusion first drawn from it was wrong, and Part 1b
 supersedes this answer.* 260 B in at
 115200 8N1 (86.8 µs/byte) = **22.6 ms**, plus 0.35 ms out; core at P=8 = **3.55 µs**. A 1080p30
 frame budget is 33 ms, so **the link alone is 69% of the frame budget.** Actions: (a) re-scope the
@@ -370,8 +484,32 @@ T = (C+1) + N·⌈N/P⌉ + L + 1        — fully data-independent, no K term
 | **16** | 291 cy / 2.91 µs | **72 cy / 0.72 µs** | **4.0×** |
 | 32 | 259 cy / 2.59 µs | 40 cy / **0.40 µs** | 6.5× |
 
-**Adopted: the restructure at P=16** (user's decision) — 0.72 µs, ~62% LUT, comfortable routing
+**Adopted: the restructure at P=16** (decided) — 0.72 µs, ~62% LUT, comfortable routing
 margin. P=32 stays a synthesis-sweep data point; P9 flags it as where routing gets hard.
+
+The overlap is the whole trick — resolve consumes row `r` while the lanes are already computing row
+`r+1`, so the `L`-cycle drain is paid **once at the end** instead of once per keeper:
+
+```mermaid
+gantt
+  title All-pairs schedule at P=16 - 72 cycles total
+  dateFormat X
+  axisFormat %s
+  section Sort
+  bitonic32 3 cycles    :0, 3
+  section Row fill - 2 cy per rank
+  fill rank 0           :3, 5
+  fill rank 1           :5, 7
+  fill rank 2           :7, 9
+  fill rank 31          :65, 67
+  section Resolve - trails fill by L=4
+  resolve rank 0        :8, 9
+  resolve rank 1        :10, 11
+  resolve rank 31       :70, 72
+```
+
+Contrast the keeper-serial design, where every keeper paid its own 4-cycle drain: 32 × L = 128 of
+its 259 cycles were pipeline refill.
 
 Cost: ~74 FF of row buffering, a 32:1 × 24 b area mux (≈264 LUT), and a **simpler** FSM — the keeper
 scan and valid-mask-driven dispatch both disappear. **It also strengthens the determinism
@@ -471,7 +609,7 @@ the first row issues, which a masked-argmax tree cannot supply (Part 1e).
 
 ---
 
-## Part 1b — Can this actually be real-time? Yes. (Correcting my own Q22 answer)
+## Part 1b — Can this actually be real-time? Yes. (Q22's answer corrected)
 
 Q22 concluded "re-scope the claim to accelerator-core latency". That is a retreat, and it was the
 wrong answer — the problem is one configuration constant, not the architecture.
@@ -493,7 +631,7 @@ Round trip is 264 B in + 6 B out = 2,700 bits:
 | **1,000,000** | **2.70 ms** | **8.1%** | **370.4** | **100.00** | **0.000%** |
 | 3,000,000 | 0.90 ms | 2.7% | 1111.1 | 33.33 | 1.000% |
 
-**Decided: design point 1 Mbaud** (user's call). Three reasons: it puts the link at 7.9% of the frame
+**Decided: design point 1 Mbaud** (decided). Three reasons: it puts the link at 7.9% of the frame
 budget, which is unambiguously real-time; the divider is **exactly 100**, so there is zero baud
 error (3 Mbaud needs 33.33 → 1% error, near the tolerance limit); and beyond ~1 Mbaud **USB
 latency dominates the wire time anyway** (below), so faster buys nothing measurable.
@@ -649,7 +787,92 @@ demo path and the verification path cannot drift.
   then always clear `valid_mask(idx_r)`. Rank order is what allows the overlap.
   `DONE` after rank 31 resolves — **always exactly `N²/P + L + C + 2` cycles, no data dependence.**
 - **Conventions**: single 100 MHz domain (pin W5), synchronous active-high `rst` from a debounced
-  BTNC plus power-on reset, `ieee.numeric_std`, VHDL-2008 (`--std=08`) throughout.
+  BTNC plus power-on reset, `ieee.numeric_std`.
+
+### Dataflow
+
+```mermaid
+flowchart LR
+  subgraph HOST["Host - Python"]
+    GEN["sanitise, quantise,<br/>pack 8-byte records"]
+    DRAW["check status + seq,<br/>read keep_mask"]
+  end
+  subgraph FPGA["Basys 3 - XC7A35T - 100 MHz"]
+    RX["uart_rx<br/>2-flop sync"]
+    FR["frame_rx<br/>magic, CRC-8, seq"]
+    STORE["box_store<br/>32 x 64b + 32 x 24b areas"]
+    SORT["bitonic32<br/>240 CAS, 3 cy"]
+    IDX["index_table<br/>rank to slot"]
+    SRC["row-source mux<br/>32:1"]
+    LANES["16 x iou_lane<br/>L = 4"]
+    BUF["2-row buffer<br/>S row + idx"]
+    RES["resolve<br/>1 rank per cycle"]
+    KM["keep_mask"]
+    TX["frame_tx, uart_tx"]
+    RX --> FR --> STORE
+    STORE --> SORT --> IDX --> SRC
+    STORE --> SRC
+    SRC --> LANES
+    STORE --> LANES
+    LANES --> BUF --> RES --> KM --> TX
+  end
+  GEN -->|"264 B at 1 Mbaud"| RX
+  TX -->|"6 B"| DRAW
+```
+
+Only `{score, index}` traverses the sorter (21 bits). Payloads never move — they sit in `box_store`
+and are read by column, which is what makes static lane binding possible.
+
+### Control FSM
+
+```mermaid
+stateDiagram-v2
+  [*] --> IDLE
+  IDLE --> LOAD: magic detected
+  LOAD --> IDLE: CRC fail, status 0x01
+  LOAD --> IDLE: busy, status 0x02
+  LOAD --> SORT: CRC ok, areas already computed
+  SORT --> FILL: 3 cycles
+  FILL --> FILL: row r, N/P cycles, resolve r-1 in parallel
+  FILL --> DRAIN: rank 31 issued
+  DRAIN --> DONE: L = 4
+  DONE --> IDLE: emit status, seq, keep_mask
+```
+
+Every path from `SORT` to `DONE` is a fixed-length counter walk — no trip count depends on the data,
+which is why latency is an equality rather than a bound.
+
+### Language and toolchain policy
+
+Decided once, because it applies to every file the team writes.
+
+**Synthesisable RTL is written in the VHDL-93-compatible subset. Testbenches are VHDL-2008.**
+The RTL needs *zero* 2008 features — `nms_pkg`'s `array (0 to 31) of unsigned(20 downto 0)`, nested
+`generate`, `numeric_std`, `rising_edge` are all VHDL-93 — and the all-pairs restructure removed the
+one temptation (`or valid_mask`), since termination is now a fixed counter. So `scripts/synth.tcl`
+uses **plain `read_vhdl`, no `-vhdl2008`**, and Vivado's partial 2008 support can never bite. Note
+that "one vendor" would not have saved us: **xsim's 2008 subset and Vivado synthesis's 2008 subset
+are documented separately and differ.**
+
+**House rule that makes the usual objection unrepresentable.** Giving up `process(all)` normally
+trades one hazard for another, since a wrong sensitivity list is itself a sim/synth mismatch. Two
+things remove it: combinational logic is written as **concurrent assignments, never combinational
+processes** (concurrent conditional assignment is VHDL-93 and has no sensitivity list to get wrong),
+and processes are **clocked only**, with `(clk)` as the entire list. GHDL additionally analyses with
+**`-Wsensitivity -Wall`** — that warning exists and is *not* on by default, so it must be asked for.
+
+```vhdl
+-- house style: no process, nothing to get wrong, synthesises identically to process(all)
+swap <= '1' when (a > b) xor (dir_desc = '1') else '0';
+y0   <= b when swap = '1' else a;
+y1   <= a when swap = '1' else b;
+```
+
+**Tool split.** GHDL is the development loop and the bulk vector runs (~1 s per testbench, free,
+and what [CLAUDE.md](../CLAUDE.md) line 68 already mandates). Vivado owns synthesis, implementation,
+timing and bitstream. **xsim is run once at C4** as a second opinion — two independent simulators
+agreeing is far stronger evidence than one, and it is the real mitigation for L6. Vivado is not on
+`PATH`, so every script sources `~/Vivado/2026.1/Vivado/settings64.sh` first.
 - **Async input discipline**: the UART RX pin is the only asynchronous input — **2-flop
   synchroniser**, no exceptions. Everything else is single-domain, so there is no other CDC.
 - **Watchdog**: the FSM is now a fixed-length counter walk, so it cannot hang by construction — the
@@ -688,6 +911,29 @@ fanout, not the LUT count, as the risk.
 
 ## Part 3 — Work plan
 
+```mermaid
+flowchart TD
+  A["A1-A5, A7<br/>spec freeze, integer model,<br/>vector generator, CPU benchmark"]
+  B0{"B0 - Vivado smoke test<br/>get_parts xc7a35tcpg236-1"}
+  B123["B1-B3<br/>nms_pkg, cas, bitonic32<br/>+ self-checking testbenches"]
+  B4["B4 - Yosys<br/>fast area loop, optional"]
+  B5{"B5 - Vivado gate<br/>timing + area on sorter alone"}
+  FOLD["folded sorter fallback<br/>16-CAS layer reused, 15 cy"]
+  C1{"C1 - iou_lane<br/>DSP inference + LUT cost<br/>fixes P"}
+  C234["C2-C4<br/>box_store, all-pairs FSM,<br/>top-level + xsim cross-check"]
+  D["D1-D3<br/>UART, XDC, host script,<br/>Vivado impl + bitstream"]
+  A --> B123
+  B0 --> B123
+  B123 --> B4 --> B5
+  B5 -->|"LUT or timing fails"| FOLD
+  FOLD --> B5
+  B5 -->|"passes"| C1
+  C1 --> C234 --> D
+```
+
+**Execution scope is A, B and C1** — everything up to and including the gate that fixes `P`. The
+diamonds are the three risks that can still invalidate the architecture.
+
 ### Phase A — freeze the spec, rewrite the model (no RTL)
 
 | # | File | Action |
@@ -697,8 +943,8 @@ fanout, not the LUT count, as the risk.
 | A3 | `models/nms_model.py` | Integer golden model, **no floats anywhere**. Port `calculate_iou`/`nms` from [golden-model.ipynb](../models/golden-model.ipynb) — structure is right; only the float divide, tie order and missing clamps change. API: `pack_record`, `unpack_record`, `box_area` (clamped), `suppresses(k, c) -> bool` (exact `(I<<8) >= T_INT*U`), `sort_key(score, idx)`, `quantise_score(f) = round(f*65535)`, and **both** `nms_sequential(records, present_mask)` (the textbook loop — the authority on what NMS means) and `nms_allpairs(records, present_mask)` (the structure the RTL implements), each returning `keep_mask`, with a test asserting they agree. See Verification. |
 | A4 | `models/gen_vectors.py` | Emit `models/data/<case>.hex` (32 lines × 16 hex chars, then 1 line × 8 hex = `present_mask`) and `<case>.mask` (1 line × 8 hex = expected `keep_mask`). Mandatory cases: `notebook31` (+ `present_mask=0x7FFFFFFF`), `ties` (incl. all-equal), `degenerate` (zero-area, inverted), `boundary` (pairs exactly on `2I == U`), `disjoint`, `all_survive`, `rand_seed0..9`. |
 | A5 | [golden-model.ipynb](../models/golden-model.ipynb), [NMS.md](NMS.md) | Notebook keeps its narrative but **imports A3** rather than redefining the algorithm — one implementation only. Update NMS.md for the integer predicate, tie rule, mask output, degenerate behaviour. |
-| A6 | this file | **Done** — the original de-risking plan has been replaced by this document. |
 | A7 | `models/bench_cpu.py` | Commit the Part 1e benchmark as reproducible code: notebook-float, planned-integer and numpy-all-pairs NMS timed over 2,000 iterations, plus the thread-pool overhead probe that shows multicore cannot help at N=32. Prints the table that goes in the report. Also add a `--check` mode asserting all three agree on `keep_mask`, so the baseline cannot silently diverge from the golden model. |
+| A6 | [plan.md](plan.md) | **Re-sync.** The repo copy was committed at `a4f5658` and is now stale — it predates the Vivado 2026.1 findings, gate **B0**, the language/toolchain policy, and the xsim cross-check. Copy this document over it again, re-applying the same `docs/`-relative link fixes (`architecture.md`, `NMS.md`, `../CLAUDE.md`, `../models/golden-model.ipynb`, `../hello_tb.vhdl`) and the "original plan" wording so it does not refer to itself. |
 
 **Acceptance:** `uv run ruff check` / `ruff format --check` clean; `models/test_model.py` passes,
 including (a) `nms(notebook31)` reproduces the notebook's **7 survivors** — any difference must be
@@ -710,11 +956,12 @@ on zero-area input.
 
 | # | File | Action |
 |---|---|---|
+| **B0** | — | **Vivado smoke test, 30 seconds, before any RTL exists.** `source ~/Vivado/2026.1/Vivado/settings64.sh` then `vivado -mode batch -nolog -nojournal -source /tmp/p.tcl` with `puts [llength [get_parts xc7a35tcpg236-1]]`. Expect `1`. This confirms the part is both installed and usable under the Alveo licence that is what the install actually carries. If it returns `0`, the whole Vivado gate strategy collapses and the installer needs the Artix-7 family added — far better to learn that now than at B5. |
 | B1 | `src/components/nms_pkg.vhd` | Constants/types mirroring A2: `key_array_t` (32 × unsigned(20:0)), `box_array_t`, `area_array_t`, `T_INT`, `K_SHIFT`. Plus `models/test_params_agree.py`, which parses the VHDL and asserts equality with A2 — the anti-drift check. |
 | B2 | `src/components/cas.vhd`, `test/tb_cas.vhd` | `generic (W : positive := 21)`; ports `a, b : in unsigned(W-1 downto 0)`, `dir_desc`, `y0, y1`. `dir_desc='0'` → `y0=min, y1=max`; `'1'` reversed. Combinational. Testbench exhaustive at `W=4` plus directed 21-bit cases, self-checking per the [hello_tb.vhdl](../hello_tb.vhdl) `report`/`assert` pattern. First module through the GHDL flow end to end. |
 | B3 | `src/components/bitonic32.vhd`, `test/tb_bitonic32.vhd` | Generate schedule and reversed rank read exactly as Part 2. `generic PIPE_CUTS : natural := 2` (cuts after sub-stages 5 and 10). Testbench reads Python key vectors and checks the full permutation **including ties** against the Q18 order, for `PIPE_CUTS ∈ {0,2}`. |
 | B4 | `scripts/synth.tcl` | **Fast loop:** `source /opt/oss-cad-suite/environment && yosys -m ghdl -p "ghdl --std=08 src/components/nms_pkg.vhd src/components/cas.vhd src/components/bitonic32.vhd -e bitonic32; synth_xilinx -family xc7 -dsp; stat"` — seconds per iteration, and the ratio `LUT(W=64)/LUT(W=21) ≈ 2.4×` validates Q4 regardless of absolute error. |
-| **B5** | `scripts/synth.tcl` | **The gate that actually matters, and it comes early now that Vivado is in play.** Batch-mode (`vivado -mode batch -source scripts/synth.tcl`) `synth_design` + `opt/place/route` on `bitonic32` **alone**, part `xc7a35tcpg236-1`, 100 MHz constraint. Record `report_utilization` and `report_timing_summary`. Three outcomes: **(a)** meets timing with `PIPE_CUTS=2` → P1 is closed, proceed; **(b)** misses → re-place the cuts from the actual timing paths (they are a generic list precisely for this) and re-run, then try `PIPE_CUTS=3`; **(c)** still misses → drop the core clock to 50 MHz, which costs 0.72 → 1.44 µs and changes nothing that matters (Part 1e). Also sweep `PIPE_CUTS ∈ {0,2,3,14}` here — that sweep *is* the report's Q2/Q3 evidence table, and it is nearly free once the script exists. **If LUT > 9,000, build the folded fallback** (32 key regs + one reused 16-CAS layer + `i XOR d` butterfly muxes, ≈2.3k LUT, 15 cycles — free against 2.70 ms) and re-gate. |
+| **B5** | `scripts/synth.tcl` | **The gate that actually matters, and it comes early now that Vivado is in play.** `source ~/Vivado/2026.1/Vivado/settings64.sh` first (Vivado is not on `PATH`), then batch-mode (`vivado -mode batch -source scripts/synth.tcl`). The script uses **plain `read_vhdl`** — no `-vhdl2008`, per the language policy — and runs `synth_design` + `opt/place/route` on `bitonic32` **alone**, part `xc7a35tcpg236-1`, 100 MHz constraint. Record `report_utilization` and `report_timing_summary`. Three outcomes: **(a)** meets timing with `PIPE_CUTS=2` → P1 is closed, proceed; **(b)** misses → re-place the cuts from the actual timing paths (they are a generic list precisely for this) and re-run, then try `PIPE_CUTS=3`; **(c)** still misses → drop the core clock to 50 MHz, which costs 0.72 → 1.44 µs and changes nothing that matters (Part 1e). Also sweep `PIPE_CUTS ∈ {0,2,3,14}` here — that sweep *is* the report's Q2/Q3 evidence table, and it is nearly free once the script exists. **If LUT > 9,000, build the folded fallback** (32 key regs + one reused 16-CAS layer + `i XOR d` butterfly muxes, ≈2.3k LUT, 15 cycles — free against 2.70 ms) and re-gate. |
 
 ### Phase C1 — one IoU lane, verified and area-measured
 
@@ -738,16 +985,18 @@ sorter area (B4), **sorter timing (B5)**, and lane cost/DSP inference (C1). The 
 designed *after* C1 because P sets the matrix fill width, and after B5 because a failed timing gate
 changes the clock the FSM is designed against.
 
-### Roadmap (not built in the first pass)
+### Roadmap (written into docs/plan.md, not built this pass)
 
 `C2` `box_store.vhd` (32×64 b payload + 32×24 b area registers, areas filled during `LOAD`, static
 column striping) · `C3` `nms_ctrl.vhd` — **the all-pairs FSM**: rank-ordered row fill into the
 2-row `S` streaming buffer, resolve trailing by `L`, both masks; this replaces the keeper-dispatch design and
 is the single most valuable module to get right, since it is where the 4× speedup lives · `C4`
-`nms_top.vhd` + `tb_nms_top.vhd` file-I/O over the full A4 set, single 32-bit mask compare, plus a
+`nms_top.vhd` + `tb_nms_top.vhd` file-I/O over the full A4 set, single 32-bit mask compare, **run
+under both GHDL and Vivado xsim** (`xvhdl`/`xelab`/`xsim`) — the one place two independent
+simulators are worth the setup cost, per L6 — plus a
 **cycle-count assertion** that the batch completes in exactly `N²/P + L + C + 2` cycles — the
 determinism claim, checked rather than asserted · `D1` UART rx/tx + byte packer +
-`deployment/basys3.xdc` · `D2`
+`deployment/basys3.xdc` — **note Digilent board files are not installed and 2026.1 is new enough that they may not exist for it; target the raw part `xc7a35tcpg236-1` and hand-write the XDC from Digilent's Basys 3 master constraints** (clock W5, `RsRx` B18, `RsTx` A18, BTNC U18 — confirm each against the master file) · `D2`
 Vivado synth/impl for utilisation, Fmax and the P-sweep curve, then bitstream · `D3`
 `scripts/host_nms.py` (1 Mbaud, `latency_timer=1`, read timeout, frame builder from the Part 2
 sanitisation contract) + `scripts/Makefile`.
@@ -758,7 +1007,7 @@ applies steps 1–6 of the sanitisation contract, streams the batch, and draws t
 returned `keep_mask`. The FPGA side does not change — that is the point of freezing the contract
 now. Adds a model dependency to the repo, so it stays out of the core deliverable.
 
-**`C5` — masked-argmax variant: decision deferred to after C4** (user's call), so it is planned but
+**`C5` — masked-argmax variant: decision deferred to after C4** (decided), so it is planned but
 not committed. Design is fixed now so the choice is a yes/no later, not a redesign:
 `src/components/argmax32.vhd`, a generate-loop reduction over `N−1` nodes, each `8 + ⌈W/2⌉` LUT,
 input keys ANDed with `valid_mask`; the winner's low 5 bits are the keeper index directly, given the
@@ -780,11 +1029,12 @@ exceed the RTL effort. Explicit triage so it does not silently expand:
 | Utilisation + Fmax at D2 | ~2 h | **Required** — a stated deliverable |
 | `P` scaling curve at D2 | ~3 h | **Required** — the only justification for P being a generic |
 | Cycle-count assertion (C4) | ~1 h | **Required** — checks the determinism claim |
+| xsim cross-check at C4 | ~4 h | **Required** — two independent simulators agreeing is the L6 mitigation |
 | Argmax A/B (C5) | ~1 day | **Optional**, decided after C4 |
-| MicroBlaze head-to-head | ~3 days | **Optional stretch** — upgrades the claim, does not establish it |
+| MicroBlaze head-to-head | ~2 days | **Optional stretch** — cost dropped: **Vitis is installed alongside Vivado**, so the software toolchain is no longer a blocker. Upgrades the claim; does not establish it |
 | Folded sorter | ~2 days | **Contingent** — only if B4/B5 fail |
 
-**Proposal corrections.** The `.tex` stays outside the repo (user: reference only), so A6 ends with a
+**Proposal corrections.** The `.tex` stays outside the repo (reference only), so A6 ends with a
 short checklist for the team to apply wherever it lives:
 
 1. **Two `\documentclass` commands** — a hard compile error, and it silently discards the `geometry`
@@ -910,7 +1160,7 @@ Part 2; the table is retained so the report can show they were found and closed 
 | **L3** | **`busy` drops frames silently.** | Cannot occur at 2.70 ms vs 0.72 µs — but "cannot occur" is not "guaranteed", and the host would never learn. | `status = 0x02` (busy). |
 | **L4** | **Watchdog action undefined.** P4's counter detects a >32-iteration hang but nothing consumes the flag. | A detected fault still hangs the host. | `status = 0x03` (internal error). |
 | **L5** | **Quantise-then-sort ordering.** If the model sorted float scores and the RTL sorts u16, two floats quantising to the same integer could order differently — a mismatch with no bug in either. | Silent testbench failure at the worst possible place to debug. | Already implied ("no floats in `nms_model`"), but make it explicit: **quantisation happens at the generator boundary; the model sees integers only, and sorts them.** |
-| **L6** | **Simulation/synthesis mismatch.** GHDL is the only simulator in the loop; Vivado could infer latches from an incomplete `if`/`case` that GHDL simulates happily. | Works in simulation, wrong on hardware — the classic. | Analyse with `ghdl -a --std=08 --warn-error`, no incomplete assignments, and read Vivado's synthesis warnings rather than skipping to the bitstream. |
+| **L6** | **Simulation/synthesis mismatch.** Vivado could infer a latch from an incomplete `if`/`case` that GHDL simulates happily, or treat a 2008 construct differently. | Works in simulation, wrong on hardware — the classic. | Four layers, all now decided: RTL in the **VHDL-93 subset** so no 2008 gap exists; **concurrent assignments for combinational logic** so no sensitivity list can be wrong; `ghdl -a -Wsensitivity -Wall --warn-error`; **xsim as an independent second simulator at C4**; and read Vivado's synthesis warnings rather than skipping to the bitstream. |
 | **L7** | **Testbench file paths are relative to the simulator's working directory.** | Vectors load for one person and not another. | Fix the cwd in `scripts/Makefile` and pass paths as generics. |
 | **L8** | **Garbage-in on a slot marked present.** The hardware clamps, so it is deterministic, but meaningless. | Not a correctness hole — a contract boundary. | State that the host owns record validity (Part 2 contract); no RTL change. |
 
@@ -961,6 +1211,15 @@ it shows which claims were tested rather than assumed. **Every row is a claim th
 | Part 1d cycle table | P=1/2/4 dropped the `(C+1)` term | 1029/517/261 → **1032/520/264** |
 | P=32 costs ~80% LUT | At P=32 each lane owns one column and needs no payload mux | **73%** |
 | Golden model implements the RTL's algorithm | Model and RTL would share the same restructuring — a shared misconception passes silently | Model implements **both** forms, asserted equal |
+| VHDL-2008 (`--std=08`) throughout, RTL included | Vivado synthesis supports a documented *subset* of 2008, and xsim's subset differs again — while our RTL needs **zero** 2008 features | RTL in the **VHDL-93 subset**, testbenches 2008; plain `read_vhdl` |
+
+**The largest finding, which arrived last and outranks all of the above:** the project's *premise*
+was wrong, not just its details. Measured on this machine, NMS at N=32 costs a CPU **47 µs — 0.14%
+of a 33 ms frame**, so there is no bottleneck to accelerate; behind the UART the accelerated system
+is **10× slower** than not accelerating; and at a 0.003% duty cycle the FPGA's static power exceeds
+the energy the acceleration saves. Every number in Parts 1–5 is correct, and the thing they describe
+was not worth building. That is what Part 0 exists to fix — and notably, the sorting work survives
+the pivot intact, because in 3DGS the sort really is the bottleneck.
 
 Two claims were verified rather than argued, because the whole design rests on them:
 
@@ -977,8 +1236,27 @@ area figure. Real USB round-trip latency is unknowable until hardware.
 
 ## Verification
 
-- **Every module self-checks** via `assert`/`report`, `tb_` prefix, per [CLAUDE.md](../CLAUDE.md):
-  `ghdl -a --std=08 --workdir=build <srcs> <tb> && ghdl -e --std=08 --workdir=build tb_x && ghdl -r
+The equivalence chain — each link checked independently, so a shared misconception cannot pass:
+
+```mermaid
+flowchart TD
+  SEQ["nms_sequential<br/>textbook loop<br/>the authority on what NMS means"]
+  ALL["nms_allpairs<br/>same structure the RTL implements"]
+  RTL["nms_top RTL<br/>GHDL, then xsim at C4"]
+  HW["Basys 3 over UART<br/>hardware-in-the-loop"]
+  SEQ -->|"20,000 adversarial batches<br/>ties, 8-bit scores, degenerate boxes<br/>0 mismatches"| ALL
+  ALL -->|"bit-exact 32-bit mask<br/>12 curated cases + 1,000 random"| RTL
+  RTL -->|"same vectors, same masks"| HW
+```
+
+Without the first link the RTL would only ever be compared against a model sharing its own
+restructuring. That is why `nms_model.py` keeps **both** algorithm forms.
+
+- **Every module self-checks** via `assert`/`report`, `tb_` prefix, per [CLAUDE.md](../CLAUDE.md).
+  RTL is VHDL-93 but GHDL analyses everything at `--std=08` (testbenches need `hread`), with
+  **`-Wsensitivity -Wall --warn-error`** so an incomplete sensitivity list or a suspect construct
+  fails the build rather than warning into the scrollback:
+  `ghdl -a --std=08 -Wsensitivity -Wall --workdir=build <srcs> <tb> && ghdl -e --std=08 --workdir=build tb_x && ghdl -r
   --std=08 --workdir=build tb_x --assert-level=error`. Each ends with an explicit `report "PASS"`;
   zero assertion failures is the criterion.
 - **Bit-exact, no tolerance band** — RTL vs the Python integer model as a 32-bit mask equality. The

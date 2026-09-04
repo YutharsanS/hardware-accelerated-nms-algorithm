@@ -60,3 +60,13 @@ Thumbs.db
 .venv/
 __pycache__/
 *.pyc
+
+# =========================
+# 3DGS scene data
+# =========================
+
+# Pretrained Gaussian scenes are hundreds of MB - downloaded, never committed.
+# See "Reproducing" in docs/phase0_findings.md for the download command.
+models/data/scenes/
+*.ply
+*.npz
