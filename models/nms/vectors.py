@@ -14,6 +14,10 @@ separate ``.txt`` that nothing parses.
 ``<case>.pairs`` explicit IoU lane stimulus and expected result
 ===============  ==============================================================
 
+One further file, ``cases.txt``, lists every case name one per line. The VHDL testbenches
+read it and loop, so a case added here is covered by the RTL gates without anyone editing
+a VHDL file -- which is the only way to stop the two lists drifting apart.
+
 The expected values come from :mod:`models.nms.model`, so a testbench comparing against
 them is comparing against the golden model rather than against a second implementation
 written into the testbench. That distinction matters for ``.pairs`` in particular: were the
@@ -30,6 +34,9 @@ from models.nms import batches, model
 from models.nms import params as p
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "vectors"
+
+MANIFEST = "cases.txt"
+"""Lists every case name, one per line, for the VHDL testbenches to iterate."""
 
 # Cases that also get an explicit .pairs file for the IoU lane testbench. All 18 cases
 # would be ~900 kB of mostly redundant rows; these five carry every hazard between them and
@@ -356,15 +363,31 @@ def all_cases() -> dict[str, Case]:
 
 
 def write_all(outdir: Path = DEFAULT_DIR) -> dict[str, list[Path]]:
-    """Write every case to disk.
+    """Write every case to disk, plus the manifest the testbenches iterate.
 
     Args:
         outdir: Destination directory.
 
     Returns:
-        Mapping of case name to the paths written.
+        Mapping of case name to the paths written. The manifest is listed under the key
+        ``"cases.txt"``.
     """
-    return {
+    cases = all_cases()
+    written = {
         name: write_case(case, outdir, pairs=name in PAIR_CASES)
-        for name, case in all_cases().items()
+        for name, case in cases.items()
     }
+    written[MANIFEST] = [_write(outdir / MANIFEST, sorted(cases))]
+    return written
+
+
+def read_manifest(outdir: Path = DEFAULT_DIR) -> list[str]:
+    """Read the case names a VHDL testbench would iterate.
+
+    Args:
+        outdir: Directory holding the files.
+
+    Returns:
+        The case names, in the order the testbenches see them.
+    """
+    return (outdir / MANIFEST).read_text().split()

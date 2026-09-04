@@ -78,10 +78,18 @@ P_DEFAULT = 16
 LANE_LATENCY = 4
 """Registered stages in ``iou_lane``: min/max+clamp, multiply, union+RHS, compare."""
 
+SORT_SUBSTAGES = INDEX_W * (INDEX_W + 1) // 2
+"""Sub-stages in a Batcher bitonic network of N elements: ``k(k+1)/2`` for ``k = log2(N)``.
+15 at N=32, which is also the number of CAS levels on the unpipelined critical path."""
+
+CAS_COUNT = SORT_SUBSTAGES * (N // 2)
+"""Compare-and-swap units in the whole network: 240. At ``8 + 2*ceil(KEY_W/2)`` = 30 LUT
+each that is the 7,200 LUT (34.6%) in the area budget."""
+
 PIPE_CUTS = 2
 """Register cuts inside the bitonic network, giving a 3-cycle sort. 0 is combinational and
 will not close 100 MHz; 14 is fully pipelined and costs 10k FF for throughput nothing can
-consume."""
+consume. Bounded above by SORT_SUBSTAGES -- one cut per sub-stage is as fine as it gets."""
 
 CLOCK_HZ = 100_000_000
 
@@ -176,6 +184,9 @@ def validate() -> list[str]:
         T_INTERMEDIATE_W,
     )
 
+    want("SORT_SUBSTAGES", SORT_SUBSTAGES, 15)
+    want("CAS_COUNT", CAS_COUNT, 240)
+    want("PIPE_CUTS fits the network", PIPE_CUTS <= SORT_SUBSTAGES, True)
     want("P_DEFAULT divides N", N % P_DEFAULT, 0)
     want("latency at P_DEFAULT", latency_cycles(), 72)
     want("FRAME_BYTES_IN", FRAME_BYTES_IN, 264)

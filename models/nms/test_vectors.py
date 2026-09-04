@@ -189,6 +189,17 @@ def test_present_mask_cases_exercise_absent_slots() -> None:
     assert cases["none_present"].keep_mask == 0
 
 
+def test_manifest_lists_exactly_the_cases(written: Path) -> None:
+    # The VHDL testbenches loop over this file rather than a hard-coded list, so a case
+    # added in Python is covered by the RTL gates automatically. If the manifest could
+    # fall behind, that guarantee would be silently worthless.
+    listed = vectors.read_manifest(written)
+    assert listed == sorted(vectors.all_cases())
+    assert len(listed) == len(set(listed)), "the manifest repeats a case"
+    for name in listed:
+        assert (written / f"{name}.keys").exists(), f"{name} is listed but has no files"
+
+
 def test_committed_vectors_are_current(written: Path) -> None:
     # The files under models/data/vectors are committed so a clean checkout can run the
     # testbenches. If the generator changes without regenerating them, the RTL would be
@@ -197,10 +208,12 @@ def test_committed_vectors_are_current(written: Path) -> None:
         pytest.skip(
             "vectors not generated yet; run: uv run python -m models.nms vectors"
         )
+    stale = "; run: uv run python -m models.nms vectors"
     for name in sorted(vectors.all_cases()):
         for suffix in ("hex", "mask", "keys", "order", "trace"):
             committed = (vectors.DEFAULT_DIR / f"{name}.{suffix}").read_text()
             fresh = (written / f"{name}.{suffix}").read_text()
-            assert committed == fresh, (
-                f"{name}.{suffix} is stale; run: uv run python -m models.nms vectors"
-            )
+            assert committed == fresh, f"{name}.{suffix} is stale{stale}"
+    assert (vectors.DEFAULT_DIR / vectors.MANIFEST).read_text() == (
+        written / vectors.MANIFEST
+    ).read_text(), f"{vectors.MANIFEST} is stale{stale}"

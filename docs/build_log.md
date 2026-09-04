@@ -420,3 +420,221 @@ silently rewriting the file at commit time.
 
 **Stage 1 complete.** 176 tests pass, 1 skipped by design (`float_reference` on
 `degenerate`, which divides by zero as the original did). No RTL yet — B2.1 is next.
+
+---
+
+### B2.1 — first RTL: nms_pkg and cas                                   2026-09-04
+
+**Built:** [nms_pkg.vhd](../src/components/nms_pkg.vhd) (38 constants + 11 types),
+[cas.vhd](../src/components/cas.vhd), [tb_cas.vhd](../test/tb_cas.vhd),
+[tb_params.vhd](../test/tb_params.vhd) and
+[test_params_agree.py](../models/nms/test_params_agree.py).
+
+**Gate:** `make tb_cas` — exhaustive over all 256 input pairs at W=4 in both directions
+plus directed 21-bit cases, ending `report "PASS"` with zero assertion failures.
+
+**Result:** **PASS**, 20,538 comparisons in 0.18 s:
+
+```
+tb_cas: exhaustive W=4 sweep done (512 checks)
+tb_cas: directed W=21 cases done (538 checks)
+tb_cas: 20538 comparisons checked (512 exhaustive at W=4,
+        26 directed and 20000 random at W=21)
+PASS
+```
+
+`cas` is nine lines of architecture: one comparator whose result is shared by two muxes,
+written as three concurrent assignments with no process at all, per the house style in
+[architecture.md](architecture.md) section 10. Cost model to measure at B2.2:
+`8 + 2*ceil(W/2)` = **30 LUT at W=21**, and 240 of them = 7,200 LUT (34.6%).
+
+#### The testbench was mutation-tested, because a passing test that cannot fail is worthless
+
+Five mutants of `cas`, each analysed and run against the unmodified testbench:
+
+| mutant | outcome |
+|---|---|
+| `swap <= (a > b)` — ignores `dir_desc` | killed at 4 ns, W=4 exhaustive |
+| `not ((a > b) xor …)` — inverted swap | killed at 3 ns, W=4 exhaustive |
+| compares `a(W-2 downto 0)` — drops the MSB | killed at 49 ns, W=4 exhaustive |
+| compares `a(3 downto 0)` — **correct at W=4, wrong at W=21** | survived all 512 exhaustive cases, killed at 525 ns by the directed case `a=2^20, b=2^20-1` |
+| `swap <= (a >= b) xor …` | **survived** |
+
+**The fourth row is why the 21-bit layer exists.** A bug that is *exactly correct* at W=4
+passes a complete exhaustive sweep of that width; only the wide directed cases catch it.
+An exhaustive test at a narrow width proves less than its completeness suggests.
+
+**The fifth is not a blind spot — it is an equivalent mutant.** `a >= b` and `a > b` differ
+only when `a = b`, and then the swap exchanges two equal values, so the outputs are
+identical for all 512 inputs (checked exhaustively in Python). Nothing distinguishes them
+because there is nothing to distinguish, which also confirms the note in `cas.vhd` that the
+tie direction is unobservable.
+
+**The testbench counts its own checks** and asserts the total is 20,538. A testbench whose
+loop bound silently broke would otherwise report PASS having verified nothing — the one
+failure mode that a green build cannot show you.
+
+#### Anti-drift: the comparison is made against GHDL's evaluation, not a regex's
+
+`test_params_agree.py` does **not** parse constant expressions out of the VHDL. `tb_params`
+reports all 38 constants via `integer'image`, and the Python test runs GHDL and parses that
+output, so the numbers compared are the ones the analyser actually computed. A Python
+re-implementation of VHDL constant folding could be wrong in the same direction as the
+package it checks.
+
+The closure is **three-way and total**: names declared in `nms_pkg.vhd` = names reported by
+`tb_params` = names compared in `EXPECTED`, plus every integer constant in `params.py` has
+a counterpart. All 34 Python constants map to 34 of the 38; the other four are `MAGIC_0`,
+`MAGIC_1` (a tuple in Python), `LATENCY_CYCLES` and `BAUD_DIV` (expressions in Python).
+**No exemption list was needed**, so adding a constant to either side without the other
+fails.
+
+Verified by mutating the package, three different failure paths each naming the cause:
+
+```
+T_INT 128 -> 129            tb_params.vhd:146: T_INT does not encode an IoU threshold of 0.5
+T_INTERMEDIATE_W 13 -> 14   nms_pkg.vhd and params.py disagree (vhdl, python):
+                                                          T_INTERMEDIATE_W=(14, 13)
+new constant added           declared but not reported: ['UNREPORTED_W']
+```
+
+The middle one matters most: `T_INTERMEDIATE_W` has no self-assertion in `tb_params`, so it
+is caught *only* by the Python comparison. That is the drift the gate was built for.
+
+`tb_params` also checks what the VHDL-93 subset cannot state as a derivation — that the
+subtype widths really are cut from those constants (`key_t'length = KEY_W` and seven more),
+that `2**INDEX_W = N`, that `COORD_MAX**2 < 2**AREA_W`, that `SCORE_MAX*N + N-1` is exactly
+`2**KEY_W - 1`, and that latency is 72 cycles. The max LHS (4,292,870,400) and max RHS
+(8,552,202,750) are **absent by design**: they overflow GHDL's 32-bit `integer`, so
+`params.validate()` checks those where integers are unbounded.
+
+#### `--warn-error` is now on
+
+Deferred at B0.1 because GHDL has no per-warning severity, so enabling it before a clean
+baseline fails the build on benign categories. Measured now: the whole tree **analyses and
+elaborates with zero warnings** under `-Wall --warn-error`, so it is enabled in
+`scripts/Makefile` for both `-a` and `-e`. A new warning now means new code and stops the
+build; the escape hatch for a genuinely benign category is `make test WARN=-Wall` rather
+than weakening the default.
+
+**Estimate vs measured:** nothing to compare yet — LUT and DSP figures need Vivado, which
+still enumerates zero parts (M1). B2.2 stays deferred; correctness is unaffected.
+
+**Standing regression:** `make test` = 180 pytest passing (1 skipped by design) + 2 VHDL
+testbenches + the toolchain smoke test, in ~35 s.
+
+---
+
+### B3.1 — the bitonic sorting network                                  2026-09-04
+
+**Built:** [bitonic32.vhd](../src/components/bitonic32.vhd) — 240 CAS on 21-bit keys in 15
+generated sub-stages — and [tb_bitonic32.vhd](../test/tb_bitonic32.vhd). Plus
+`cases.txt`, a manifest of the vector set, and the `SWEEP_` mechanism in
+[scripts/Makefile](../scripts/Makefile) that runs one testbench in several configurations.
+
+**Gate:** the full permutation matches the Python order on **every** vector set including
+the tie cases, and the recovered indices match too, for `PIPE_CUTS` in {0, 2}.
+
+**Result:** **PASS** in both configurations, and in fact across {0, 1, 2, 3, 5, 14, 15}:
+
+```
+tb_bitonic32: PIPE_CUTS = 0, 20 cases x 32 keys, ordering + permutation
+              + rank table + latency all checked (18 cases pinned the latency)
+tb_bitonic32: PIPE_CUTS = 2, 20 cases x 32 keys, ...
+PASS
+```
+
+#### The testbench reads a manifest instead of a hard-coded case list
+
+`models/data/vectors/cases.txt` lists all 20 cases and the testbench loops over it, so a
+case added to `batches.py` is covered by this gate **without anyone editing a VHDL file**.
+`test_vectors.py` asserts the manifest lists exactly the generated cases, so that
+guarantee cannot quietly become false — which is the only thing that makes the indirection
+worth having over a list written here.
+
+A count of cases is not enough on its own, so the testbench also asserts by name that
+`ties`, `all_equal`, `boundary` and `notebook32` ran. A truncated manifest would otherwise
+report PASS having skipped exactly the cases that matter.
+
+#### Four checks, and sorting correctly is the weakest of them
+
+1. **strictly ascending** — the key is a strict total order, so equal neighbours mean a key
+   was duplicated or lost;
+2. **a permutation of the input** — each input key appears in the output exactly once;
+3. **the recovered index** `N-1-out(N-1-r)(4 downto 0)` equals the model's `order(r)`;
+4. **the key at the model's rank-*r* slot** is the key the sorter placed at rank *r*.
+
+Checking only that the keys came out sorted would pass a network that sorted perfectly
+while corrupting the index tag in the low 5 bits — and **that tag is the entire output**,
+since payloads never move. Checks 3 and 4 close it from the two independent directions the
+vector files allow. Verified by mutating the *testbench*: reading the rank table forward
+instead of reversed is caught, so check 3 is genuinely asserting the reversal convention
+rather than restating it.
+
+#### Latency is checked as an equality, in both directions
+
+The obvious form of this check — wait `PIPE_CUTS` edges, confirm the answer — only proves
+latency is not *longer* than claimed. A sorter with one register too few passes it, because
+by then its output has been correct for a cycle. So the testbench also samples **one edge
+short** and requires the output to still be the previous batch's result, counting the cases
+where the two differ (18 of 20) so the check cannot be vacuously true. That number is what
+B5.2's cycle-count assertion depends on, so it is measured rather than assumed.
+
+`bitonic32` additionally asserts at elaboration that `popcount(CUT_AFTER) = PIPE_CUTS`, so
+the register *count* is checked structurally as well as behaviourally.
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| direction bit inverted | killed — `all_equal` not ascending |
+| partner `i+1` instead of `i xor jj` | killed — `all_equal` not ascending |
+| last sub-stage bypassed | killed at both `PIPE_CUTS` values |
+| one register dropped from the cut table | killed by the elaboration assert |
+| testbench reads the rank table forward | killed |
+| **CAS compares only the score, ignoring the index tag** | **killed by `all_equal`** |
+| direction taken from `i+jj` instead of `i` | survived — **equivalent** |
+
+**The sixth row is the whole reason the tie cases exist.** Ignoring the index tag is the
+classic bitonic failure: a network that sorts distinct keys perfectly and is unstable on
+ties. With `all_equal` every score is identical, so a score-only comparator swaps nothing
+and the output is not ascending by full key. **A vector set without ties would have passed
+that mutant** — and the anchor `notebook32` has no duplicate scores at all.
+
+The last row is not a gap. `jj <= kk/2 < kk` always, so indices *i* and *i+jj* differ only
+in a bit below `kk` and share the same direction bit — the two forms are the same circuit.
+
+#### Two real defects found by running it
+
+1. **1,680 metavalue warnings per run at time 0.** Chaining 240 comparators makes an
+   ordinarily-invisible detail loud: an `out` port with no default is `'U'` until its first
+   delta, and it feeds the next sub-stage's comparator, so `numeric_std` reports every such
+   compare. **My first two attempts at this were wrong** — initialising `net` and `comb`
+   inside `bitonic32` did nothing, because `comb` is driven by the CAS output ports and a
+   signal initialiser is overridden by the port driver. Measured rather than reasoned about:
+   initialising the `cas` outputs alone dropped it from 1,680 to 0 at `PIPE_CUTS=0`, and
+   `net`'s initialiser is still needed for the first delta at sub-stage 1. Both are now
+   present, `comb`'s is not, and the comments say which and why. Fixed at the source rather
+   than with `--ieee-asserts=disable-at-0` so it stays fixed under xsim at B6.1.
+2. **`bitonic32`'s own output port had the same problem**, which is how the new latency
+   check first failed: `previous := keys_out` read `'U'` on the first case. Initialised —
+   and it is the truthful power-on value, since a Xilinx flip-flop comes up at 0.
+
+#### `make analyse` now refuses unlisted RTL
+
+The RTL list was a wildcard, and **it broke the moment the second module landed**: the
+wildcard sorts alphabetically, so `bitonic32.vhd` was analysed before the `cas.vhd` it
+instantiates. GHDL is order-sensitive, so the list is now explicit, and any `.vhd` under
+`src/` that is not in it fails with a message rather than being analysed at whatever
+position a wildcard chose. The old comment claimed wildcards were "deliberately avoided
+here because GHDL is order-sensitive" while using them for everything after the package.
+
+**Estimate vs measured:** still nothing to compare — 7,200 LUT and the 100 MHz timing claim
+(P1, the weakest load-bearing estimate in the plan) both need Vivado. **B3.2 remains the
+gate that matters and it stays deferred on M1.** `PIPE_CUTS` and `CUT_AFTER` are generics
+precisely so a bad timing result is a configuration change, and correctness is now verified
+at every `PIPE_CUTS` from 0 to 15, so whichever value the timing report demands is already
+known-correct.
+
+**Standing regression:** `make test` = 181 pytest passing (1 skipped by design) + 4 VHDL
+runs across 3 testbenches + the smoke test.
