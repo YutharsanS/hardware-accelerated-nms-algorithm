@@ -161,3 +161,64 @@ ties and no boundary pairs are now recorded there too.
 **Not an error, worth noting:** architecture.md already specified Basys 3 correctly. The
 stale "Nexys A7" is in the LaTeX proposal, which lives outside this repository; the plan's
 Part D carries a correction checklist for it.
+
+---
+
+### B1.2 — integer golden model, both algorithm forms                   2026-09-04
+
+**Built:** `models/nms/model.py` (`Box`, `pack_record`/`unpack_record`, `box_area`,
+`intersection_area`, `suppresses`, `sort_key`, `sort_order`, `nms_sequential`,
+`nms_allpairs`, `suppression_matrix`, plus the `ResolveStep` trace) and
+`models/nms/batches.py` (the adversarial generators, shared with B1.3's vector writer so
+the property tests and the RTL vectors exercise identical data).
+
+**Gate:** four assertions from the plan — the anchor, agreement between the two forms over
+20,000 adversarial batches, no division, and the union lemma never firing.
+
+**Result:** **PASS** — 43 tests in ~22 s.
+
+```
+anchor:   sequential = 0xE1010101   allpairs = 0xE1010101
+sweep:    20,000 batches x 32^2 = 20,480,000 predicate evaluations, 0 mismatches
+division: AST scan of model.py finds no Div / FloorDiv / Mod
+lemma:    U >= 0 asserted inside suppresses(); never fired across every case + 2,000 batches
+trace:    32 steps, final valid_mask = 0, keep = 0xE1010101
+boundary: I=600 U=1200, 2I == U exactly -> suppresses (inclusive `>=` confirmed)
+```
+
+**Why two implementations.** `nms_sequential` is the textbook loop and the authority on
+what NMS means; `nms_allpairs` is the structure the RTL implements. Had the model carried
+only the all-pairs form, the RTL would be compared against a model that made the same
+restructuring, and an error *in the restructuring* would be invisible. The 20,000-batch
+agreement is what closes that hole.
+
+**Named cases: 18** — `notebook32`, `ties`, `all_equal`, `degenerate`, `boundary`,
+`disjoint`, `all_survive`, `low_res_scores`, `rand_seed0..9`. Each targets something the
+anchor cannot reach.
+
+**Constructing an exact boundary pair took algebra, not luck.** For two equal boxes offset
+by `d` with width `W`: `I = (W−d)·H` and `U = H·(W+d)`, so `2I == U` exactly when
+`W == 3d`. Setting `W = 3d + offset` lands just above or just below at will. That is the
+only way to test a `>=` boundary without depending on floating-point rounding — and with
+`d=10, H=30` it gives `I=600, U=1200` precisely on the threshold. `offset=-1` confirms the
+predicate declines to suppress just below it.
+
+**Three claims turned into tests rather than left as prose:**
+
+* *The anchor exercises neither ties nor the boundary.* Asserted directly — zero duplicate
+  scores, zero pairs with `2I == U`. If someone later edits the notebook set into
+  something that does, the test says so instead of the claim quietly becoming false.
+* *The predicate is symmetric.* The hardware evaluates all `N²` ordered pairs rather than
+  the `N(N−1)/2` unordered ones and relies on symmetry; now checked.
+* *Rows applied to earlier ranks are no-ops.* This is the invariant that makes the
+  all-pairs restructure equivalent to the sequential loop. The trace is walked and every
+  row bit landing on an earlier rank is asserted already clear.
+
+**Embedded data kept honest:** the notebook's 32 boxes are embedded as a constant so tests
+do not depend on executing a notebook, but a test re-executes it and asserts the constant
+still matches, coordinates and quantised scores alike.
+
+**Timing note:** the 20,000-batch sweep is 19 s of the ~22 s total, so `make test` now
+takes about half a minute. Acceptable for now — running the real gate every time is worth
+it — but if it grows further the sweep should move behind a `slow` marker with a reduced
+default count.
