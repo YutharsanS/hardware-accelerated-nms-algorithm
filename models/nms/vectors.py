@@ -14,9 +14,18 @@ separate ``.txt`` that nothing parses.
 ``<case>.pairs`` explicit IoU lane stimulus and expected result
 ===============  ==============================================================
 
-One further file, ``cases.txt``, lists every case name one per line. The VHDL testbenches
-read it and loop, so a case added here is covered by the RTL gates without anyone editing
-a VHDL file -- which is the only way to stop the two lists drifting apart.
+Two more files exist that no single case owns:
+
+===================  ==========================================================
+``cases.txt``        every case name, one per line
+``random_pairs``     10,000 hostile keeper/candidate pairs for the IoU lane
+``pairs.txt``        every ``.pairs`` stem, including ``random_pairs``
+===================  ==========================================================
+
+The VHDL testbenches read those manifests and loop, so a case added here is covered by the
+RTL gates without anyone editing a VHDL file -- which is the only way to stop the two lists
+drifting apart. ``random_pairs`` exists because the batch cases cannot supply what the lane
+needs: they hold 32 boxes each, so their 1,024 ordered pairs are heavily correlated.
 
 The expected values come from :mod:`models.nms.model`, so a testbench comparing against
 them is comparing against the golden model rather than against a second implementation
@@ -37,6 +46,24 @@ DEFAULT_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "vectors
 
 MANIFEST = "cases.txt"
 """Lists every case name, one per line, for the VHDL testbenches to iterate."""
+
+PAIR_MANIFEST = "pairs.txt"
+"""Lists every ``.pairs`` file stem, for the IoU lane testbench to iterate."""
+
+RANDOM_PAIRS = "random_pairs"
+"""Stem of the hostile random pair file, which no batch case produces."""
+
+RANDOM_PAIR_COUNT = 10_000
+RANDOM_PAIR_SEED = 71
+
+PAIR_THRESHOLDS = (p.T_INT, 2**p.T_INT_W - 1)
+"""Thresholds the pair files are generated for.
+
+The shipped 128 and the maximum 255. Only the second reaches the top bit of the 33-bit RHS:
+at T_INT = 128 the largest possible RHS is 4,292,870,400, which is under 2**32, so a
+128-only test set leaves a frozen width unexercised. The lane testbench runs once per
+threshold, reading the manifest that matches its own T_INT generic.
+"""
 
 # Cases that also get an explicit .pairs file for the IoU lane testbench. All 18 cases
 # would be ~900 kB of mostly redundant rows; these five carry every hazard between them and
@@ -165,42 +192,82 @@ def write_case(
     return written
 
 
-def _pair_rows(boxes: list[model.Box]) -> list[str]:
-    """Build explicit IoU lane stimulus for every ordered pair.
+def _pair_row(keeper: model.Box, candidate: model.Box, t_int: int = p.T_INT) -> str:
+    """Format one IoU lane stimulus row.
 
     Areas are supplied as inputs rather than recomputed by the testbench, because the lane
     receives them precomputed from ``box_store`` and because a testbench that derived them
     itself would duplicate the clamp logic it is meant to be checking.
 
     Args:
-        boxes: The batch.
+        keeper: The surviving box.
+        candidate: The box being tested.
+        t_int: Threshold the expected verdict is computed at.
 
     Returns:
-        One row per ordered pair: keeper coords and area, candidate coords and area, then
-        the expected suppress bit.
+        Keeper coords and area, candidate coords and area, then the expected suppress bit.
     """
-    rows = []
-    areas = [model.box_area(b) for b in boxes]
-    for i, keeper in enumerate(boxes):
-        for j, candidate in enumerate(boxes):
-            rows.append(
-                " ".join(
-                    (
-                        _hex(keeper.x, COORD_HEX),
-                        _hex(keeper.y, COORD_HEX),
-                        _hex(keeper.a, COORD_HEX),
-                        _hex(keeper.b, COORD_HEX),
-                        _hex(areas[i], AREA_HEX),
-                        _hex(candidate.x, COORD_HEX),
-                        _hex(candidate.y, COORD_HEX),
-                        _hex(candidate.a, COORD_HEX),
-                        _hex(candidate.b, COORD_HEX),
-                        _hex(areas[j], AREA_HEX),
-                        "1" if model.suppresses(keeper, candidate) else "0",
-                    ),
-                ),
-            )
-    return rows
+    return " ".join(
+        (
+            _hex(keeper.x, COORD_HEX),
+            _hex(keeper.y, COORD_HEX),
+            _hex(keeper.a, COORD_HEX),
+            _hex(keeper.b, COORD_HEX),
+            _hex(model.box_area(keeper), AREA_HEX),
+            _hex(candidate.x, COORD_HEX),
+            _hex(candidate.y, COORD_HEX),
+            _hex(candidate.a, COORD_HEX),
+            _hex(candidate.b, COORD_HEX),
+            _hex(model.box_area(candidate), AREA_HEX),
+            "1" if model.suppresses_at(keeper, candidate, t_int) else "0",
+        ),
+    )
+
+
+def _pair_rows(boxes: list[model.Box], t_int: int = p.T_INT) -> list[str]:
+    """Build IoU lane stimulus for every ordered pair of a batch.
+
+    Args:
+        boxes: The batch.
+        t_int: Threshold the expected verdicts are computed at.
+
+    Returns:
+        ``N*N`` rows, keeper index varying slowest.
+    """
+    return [
+        _pair_row(keeper, candidate, t_int) for keeper in boxes for candidate in boxes
+    ]
+
+
+def pair_stem(threshold: int) -> str:
+    """Return the ``.pairs`` stem holding the random pairs for one threshold.
+
+    Args:
+        threshold: The ``T_INT`` value.
+
+    Returns:
+        ``"random_pairs"`` for the shipped threshold, else a suffixed name.
+    """
+    if threshold == p.T_INT:
+        return RANDOM_PAIRS
+    return f"{RANDOM_PAIRS}_t{threshold}"
+
+
+def pair_manifest_name(threshold: int) -> str:
+    """Return the manifest the lane testbench reads for one threshold.
+
+    The testbench derives this from its own ``T_INT`` generic, so one ``-gT_INT=`` flag
+    selects both the threshold and the stimulus that matches it.
+
+    Args:
+        threshold: The ``T_INT`` value.
+
+    Returns:
+        The manifest filename.
+    """
+    if threshold == p.T_INT:
+        return PAIR_MANIFEST
+    return f"pairs_t{threshold}.txt"
 
 
 def _summary(case: Case) -> list[str]:
@@ -377,8 +444,74 @@ def write_all(outdir: Path = DEFAULT_DIR) -> dict[str, list[Path]]:
         name: write_case(case, outdir, pairs=name in PAIR_CASES)
         for name, case in cases.items()
     }
+
+    # Hostile random pairs for the IoU lane, which the batch cases cannot supply: they hold
+    # 32 boxes each, so their 1,024 ordered pairs are heavily correlated. Generated once
+    # per threshold, since the expected verdict depends on T_INT.
+    pairs = batches.hostile_pairs(RANDOM_PAIR_COUNT, seed=RANDOM_PAIR_SEED)
+    for threshold in PAIR_THRESHOLDS:
+        stem = pair_stem(threshold)
+        written[stem] = [
+            _write(
+                outdir / f"{stem}.pairs",
+                [
+                    _pair_row(keeper, candidate, threshold)
+                    for keeper, candidate in pairs
+                ],
+            ),
+        ]
+        # The batch cases only carry .pairs at the shipped threshold: their boxes are a few
+        # tens of units across, so they cannot reach the wide end of the datapath whatever
+        # the threshold, and duplicating them would be 250 kB of redundant rows.
+        stems = (*PAIR_CASES, stem) if threshold == p.T_INT else (stem,)
+        name = pair_manifest_name(threshold)
+        written[name] = [_write(outdir / name, sorted(stems))]
+
     written[MANIFEST] = [_write(outdir / MANIFEST, sorted(cases))]
     return written
+
+
+def read_pair_manifest(
+    outdir: Path = DEFAULT_DIR, threshold: int = p.T_INT
+) -> list[str]:
+    """Read the ``.pairs`` file stems the IoU lane testbench would iterate.
+
+    Args:
+        outdir: Directory holding the files.
+        threshold: The ``T_INT`` the testbench runs at.
+
+    Returns:
+        The stems, in the order the testbench sees them.
+    """
+    return (outdir / pair_manifest_name(threshold)).read_text().split()
+
+
+def read_pairs(
+    name: str, outdir: Path = DEFAULT_DIR
+) -> list[tuple[model.Box, model.Box, bool]]:
+    """Read a ``.pairs`` file back as boxes plus the expected verdict.
+
+    The scores are not in the file -- the lane never sees them -- so they come back as 0.
+
+    Args:
+        name: File stem.
+        outdir: Directory holding the files.
+
+    Returns:
+        One ``(keeper, candidate)`` tuple per row, with the expected suppress bit appended
+        as a third element.
+    """
+    rows = []
+    for line in (outdir / f"{name}.pairs").read_text().splitlines():
+        f = line.split()
+        rows.append(
+            (
+                model.Box(*(int(v, 16) for v in f[0:4]), 0),
+                model.Box(*(int(v, 16) for v in f[5:9]), 0),
+                f[10] == "1",
+            ),
+        )
+    return rows
 
 
 def read_manifest(outdir: Path = DEFAULT_DIR) -> list[str]:

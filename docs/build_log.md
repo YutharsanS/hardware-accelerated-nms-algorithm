@@ -638,3 +638,131 @@ known-correct.
 
 **Standing regression:** `make test` = 181 pytest passing (1 skipped by design) + 4 VHDL
 runs across 3 testbenches + the smoke test.
+
+---
+
+### B4.1 — the IoU lane                                                 2026-09-04
+
+**Built:** [iou_lane.vhd](../src/components/iou_lane.vhd) — four registered stages, one
+DSP — and [tb_iou_lane.vhd](../test/tb_iou_lane.vhd). Plus `random_pairs.pairs`
+(10,000 hostile pairs), a second copy at `T_INT = 255`, the `pairs.txt` manifests, and
+`model.suppresses_at`.
+
+**Gate:** bit-exact against `model.suppresses` for every pair in every vector set, plus
+10,000 random pairs from file through the RTL, and 10⁶ pairs model-vs-model in Python.
+
+**Result:** **PASS** at both thresholds, zero warnings:
+
+```
+tb_iou_lane: T_INT = 128, 15120 pairs from 6 files (pairs.txt), bit-exact against
+             the golden model, streamed one per cycle at LANE_LATENCY = 4
+tb_iou_lane: T_INT = 255, 10000 pairs from 1 files (pairs_t255.txt), ...
+PASS
+```
+
+Python side: **1,000,000 pairs, 0 mismatches** between the scalar model and an independent
+numpy reimplementation, in 1.9 s. Split from the RTL run deliberately — a million pairs
+through GHDL means a ~50 MB file or a PRNG mirrored bit-exactly in VHDL and Python, and
+that mirror would need a gate of its own.
+
+**Pairs are streamed back to back, one per cycle.** Driving one pair, waiting for it to
+emerge, then driving the next would leave the stage-to-stage handover untested, and that is
+where a missing or mis-ordered register shows up — not in a single pair.
+
+#### Two coverage holes found by measuring instead of assuming
+
+Both were invisible from a passing test, and both are about frozen widths going unexercised.
+
+**1. `LHS_W = 32` and `RHS_W = 33` were untouched.** The first version of the random
+generator built boxes a few hundred units across, so the largest achieved LHS was around
+2²⁶ — the top six bits of a 32-bit signal never saw a 1. Fixed by adding a near-maximal box
+category:
+
+| | before | after |
+|---|---|---|
+| max LHS | ~2²⁶ | **4,267,735,040 — 32 bits of 32** |
+| max RHS at `T_INT=128` | ~2²⁶ | 2,146,419,840 — 31 bits |
+| max RHS at `T_INT=255` | — | 4,276,070,775 — 32 bits |
+
+`test_vectors.py` now asserts `max_lhs.bit_length() == LHS_W`, so the hole cannot reopen.
+
+**2. `T_INT = 128` cannot distinguish the generic from a hard-coded constant.** At 128 the
+multiply degenerates to a shift. Measured, not guessed: mutating the RHS to
+`to_unsigned(128, …) * union`, or to `shift_left(union, K_SHIFT-1)` — the plausible
+"T_INT is 128, so just shift" optimisation — **passes all 15,120 pairs at `T_INT = 128`**
+and is killed at 255. Hence the second run. One `-gT_INT=` flag selects the threshold *and*
+the manifest, derived inside the testbench, so the two can never be mismatched.
+
+#### A finding about the spec: `RHS_W`'s top bit is unreachable
+
+Chasing the 33rd bit led somewhere more interesting. architecture.md §4 gives max
+`U = 2·COORD_MAX² = 33,538,050` (25 bits) and max `RHS = 8,552,202,750` (33 bits). Those
+are correct **safe** bounds but not tight ones, because `U = |A| + |B| − |A ∩ B|` is the
+area of the *geometric* union and both boxes live inside the same 4096×4096 space:
+
+```
+true max U          = COORD_MAX**2      = 16,769,025      (24 bits)
+spec's stated max U = 2 * COORD_MAX**2  = 33,538,050      (25 bits)
+true max RHS        = 255 * 16,769,025  = 4,276,101,375   (32 bits)
+spec's stated max   = 255 * 33,538,050  = 8,552,202,750   (33 bits)
+```
+
+Verified by construction and by 20,000 random pairs: the union **never** exceeded
+16,769,025, and the arrangement that looks like it should double it — two disjoint
+half-planes — gives exactly that same figure, because each box is then half the area.
+
+**This is not a bug and the widths must not be narrowed.** `UNION_W = 25` is genuinely
+required: the `k_area + c_area` intermediate does reach 33,538,050, and the stimulus
+reaches 33,403,006 of it. Only the *difference* is bounded by the image. So the 25th bit of
+`U` and the 33rd of `RHS` are unreachable by construction — recorded in
+`test_union_is_bounded_by_the_image_not_by_twice_a_box` so that (a) nobody narrows `UNION_W`
+to 24 on the strength of the `U` bound and breaks the adder, and (b) nobody spends time
+chasing bit coverage that geometry forbids.
+
+**Suggested for architecture.md:** state both bounds, the algebraic one that sets the width
+and the geometric one that is actually reachable. The widths themselves are right, so this
+is a precision improvement rather than a correction — left for a separate pass rather than
+edited mid-gate.
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| `>` instead of `>=` | killed — `boundary` row 2 |
+| clamp removed from the width | killed — **by the union-underflow assertion**, `I = 108780` against an area sum of 1890 |
+| union adds instead of subtracts | killed |
+| LHS shifted one place too few | killed |
+| `aa` takes max instead of min | killed |
+| valid chain one stage too short | killed — `valid_out` low when a result was due |
+| threshold hard-coded, generic ignored | survived at 128, **killed at 255** |
+| multiply replaced by a shift | survived at 128, **killed at 255** |
+| clamp threshold `t_w >= 0` instead of `> 0` | survived — **equivalent** |
+
+The second row is the §7 proof earning its place as a live assertion: an unsigned wrap there
+would otherwise have produced a plausible wrong answer rather than a fault. The last row is
+not a gap — at `t_w = 0` the sliced value is 0, so both branches give `w = 0`.
+
+#### Design notes
+
+**`rst` clears the valid chain only**, not the datapath. A stale coordinate is harmless
+because its result is never marked valid, whereas a stale `valid` would write a suppression
+bit no box asked for. That is 4 resettable flip-flops instead of ~130, and the testbench
+asserts it: driving `valid_in = '1'` throughout reset must produce nothing.
+
+**Latency is an equality here too.** After the last valid input the testbench requires
+`valid_out` to be low one cycle later, so a chain one stage too *long* fails as well.
+
+**The clamp uses a signed 13-bit subtract**, which is the `T_INTERMEDIATE_W` signal
+architecture.md §4 specifies: the sign bit *is* the clamp decision, so one subtract yields
+both "do the boxes miss?" and the overlap extent, where a compare-then-subtract needs two
+operators.
+
+**Estimate vs measured:** the ≤ 300 LUT and **exactly 1 DSP** targets need Vivado, still
+blocked on M1, so **B4.2 stays deferred and `P = 16` stays provisional**. One thing worth
+noting for that gate: the design has exactly one `*` on a per-pair value (`s1_w * s1_h`);
+`T_INT * union` is a constant multiply that folds, and the areas arrive precomputed. If
+B4.2 reports more than 1 DSP, the cause will be `T_INT * union` failing to fold rather than
+anything structural.
+
+**Standing regression:** `make test` = 188 pytest passing (1 skipped by design) + 6 VHDL
+runs across 4 testbenches + the smoke test, in 36 s.

@@ -263,3 +263,80 @@ def test_trace_shows_rows_applied_to_earlier_ranks_are_no_ops() -> None:
                             f"{rank_of[slot]}"
                         )
             valid_before = step.valid_mask
+
+
+def test_union_is_bounded_by_the_image_not_by_twice_a_box() -> None:
+    # docs/architecture.md gives max U as 2*COORD_MAX**2 = 33,538,050, needing 25 bits.
+    # That is a correct *safe* bound but not a tight one: U = |A| + |B| - |A and B| is the
+    # area of the geometric union, and both boxes live inside the same 4096x4096 space, so
+    # U can never exceed COORD_MAX**2 = 16,769,025, which fits 24 bits.
+    #
+    # Recorded as a test for two reasons. UNION_W = 25 is still *required*, because the
+    # k_area + c_area intermediate genuinely reaches 33,538,050 -- so anyone narrowing it
+    # to 24 on the strength of the U bound would break the adder. And the 25th bit of U,
+    # hence the 33rd bit of RHS, is unreachable by construction, so chasing 100% bit
+    # coverage there is wasted effort rather than a missing test.
+    full = model.Box(0, 0, p.COORD_MAX, p.COORD_MAX, 0)
+    assert model.box_area(full) == p.COORD_MAX**2
+
+    # the k_area + c_area intermediate genuinely needs all 25 bits
+    area_sum = model.box_area(full) + model.box_area(full)
+    assert area_sum == 2 * p.COORD_MAX**2
+    assert area_sum.bit_length() == p.UNION_W
+
+    # the union itself cannot exceed the image area, whatever the two boxes are
+    rng = random.Random(103)
+
+    def well_formed() -> model.Box:
+        """Return a random box with a > x and b > y over the full coordinate range."""
+        x, a = sorted((rng.randint(0, p.COORD_MAX), rng.randint(0, p.COORD_MAX)))
+        y, b = sorted((rng.randint(0, p.COORD_MAX), rng.randint(0, p.COORD_MAX)))
+        return model.Box(x, y, a, b, 0)
+
+    worst = 0
+    candidates = [
+        (full, full),
+        (full, model.Box(0, 0, p.COORD_MAX, p.COORD_MAX // 2, 0)),
+        # two disjoint half-planes -- the arrangement that looks like it should double U
+        (
+            model.Box(0, 0, p.COORD_MAX, 2047, 0),
+            model.Box(0, 2048, p.COORD_MAX, p.COORD_MAX, 0),
+        ),
+        *((well_formed(), well_formed()) for _ in range(20_000)),
+    ]
+    for first, second in candidates:
+        inter = model.intersection_area(first, second)
+        union = model.box_area(first) + model.box_area(second) - inter
+        assert 0 <= union <= p.COORD_MAX**2, f"union {union} exceeds the image area"
+        worst = max(worst, union)
+    assert worst == p.COORD_MAX**2, f"never reached the true maximum, only {worst}"
+    assert worst.bit_length() == p.UNION_W - 1
+
+    # and therefore the top bit of the 33-bit RHS is unreachable
+    max_rhs = (2**p.T_INT_W - 1) * p.COORD_MAX**2
+    assert max_rhs.bit_length() == p.RHS_W - 1
+    assert max_rhs < 2 ** (p.RHS_W - 1)
+
+
+def test_suppresses_at_covers_the_whole_threshold_field() -> None:
+    # T_INT is a generic, not a constant, so every value it can hold must work. 0 means
+    # "suppress everything" (0 >= 0) and 255 is the widest RHS the datapath can see.
+    boxes = batches.named_cases()["boundary"]
+    first, second = boxes[0], boxes[1]
+    assert model.suppresses_at(first, second, 0) is True
+    assert model.suppresses(first, second) == model.suppresses_at(
+        first, second, p.T_INT
+    )
+
+    # Monotone in the threshold: raising T_INT can only ever suppress less. This is the
+    # property the RTL's T_INT generic has to preserve, and it holds for all 256 values.
+    verdicts = [model.suppresses_at(first, second, t) for t in range(2**p.T_INT_W)]
+    assert verdicts[0] is True, "T_INT = 0 must suppress everything (0 >= 0)"
+    for lower, higher in itertools.pairwise(verdicts):
+        assert not (higher and not lower), "raising T_INT started suppressing more"
+
+    # monotone in the threshold: raising it can only ever suppress less
+    verdicts = [model.suppresses_at(first, second, t) for t in range(2**p.T_INT_W)]
+    assert verdicts[0] is True
+    for lower, higher in itertools.pairwise(verdicts):
+        assert not (higher and not lower), "raising T_INT started suppressing more"

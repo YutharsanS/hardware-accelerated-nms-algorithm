@@ -319,3 +319,143 @@ def hostile_stream(count: int, *, seed: int = 0) -> list[list[Box]]:
         case_all_equal,
     )
     return [generators[i % len(generators)]() for i in range(count)]
+
+
+def hostile_pairs(count: int, *, seed: int = 0) -> list[tuple[Box, Box]]:
+    """Return random keeper/candidate pairs weighted towards the lane's hazards.
+
+    Uniform random coordinates would be a poor test of ``iou_lane``: almost every such
+    pair misses entirely, so ``I = 0`` and the clamp, the multiply and the 33-bit compare
+    are never stressed together. This mixes the cases that actually decide correctness --
+    zero-area and inverted boxes for the clamp, pairs exactly on ``2I == U`` and one unit
+    either side for the ``>=``, and identical boxes for the ``I = U`` extreme.
+
+    Every category is emitted in a fixed rotation rather than by weighted sampling, so a
+    given ``count`` always contains a known number of each and the coverage cannot vary
+    between runs.
+
+    Args:
+        count: How many pairs to generate.
+        seed: Base seed.
+
+    Returns:
+        A list of ``(keeper, candidate)`` pairs.
+    """
+    rng = random.Random(seed)
+    limit = p.COORD_MAX
+
+    def clamp(value: int) -> int:
+        """Keep a coordinate inside the 12-bit field.
+
+        Args:
+            value: Candidate coordinate.
+
+        Returns:
+            The value clipped to ``0..COORD_MAX``.
+        """
+        return max(0, min(limit, value))
+
+    def plain(span: int) -> Box:
+        """A well-formed box of roughly the given span at a random position.
+
+        Args:
+            span: Rough width and height.
+
+        Returns:
+            A box with ``a > x`` and ``b > y``.
+        """
+        x = rng.randint(0, limit - span - 1)
+        y = rng.randint(0, limit - span - 1)
+        return Box(
+            x,
+            y,
+            clamp(x + rng.randint(1, span)),
+            clamp(y + rng.randint(1, span)),
+            rng.randint(0, p.SCORE_MAX),
+        )
+
+    def shifted(box: Box, dx: int, dy: int) -> Box:
+        """Translate a box, clamping into range.
+
+        Args:
+            box: The box to move.
+            dx: Horizontal shift.
+            dy: Vertical shift.
+
+        Returns:
+            The translated box.
+        """
+        return Box(
+            clamp(box.x + dx),
+            clamp(box.y + dy),
+            clamp(box.a + dx),
+            clamp(box.b + dy),
+            box.score,
+        )
+
+    def overlapping() -> tuple[Box, Box]:
+        """Two boxes that genuinely overlap by a random amount."""
+        first = plain(400)
+        span = max(1, (first.a - first.x) // 2)
+        return first, shifted(first, rng.randint(-span, span), rng.randint(-span, span))
+
+    def zero_area() -> tuple[Box, Box]:
+        """One box collapsed to a line or a point, so its area clamps to 0."""
+        first = plain(300)
+        flat = Box(first.x, first.y, first.x, first.b, first.score)
+        return (flat, first) if rng.random() < 0.5 else (first, flat)
+
+    def inverted() -> tuple[Box, Box]:
+        """One box with a <= x or b <= y, which must clamp rather than wrap."""
+        first = plain(300)
+        bad = Box(first.a, first.b, first.x, first.y, first.score)
+        return (bad, first) if rng.random() < 0.5 else (first, bad)
+
+    def on_boundary() -> tuple[Box, Box]:
+        """A pair placed exactly on, or one unit either side of, ``2I == U``."""
+        d = rng.randint(1, 300)
+        height = rng.randint(1, 400)
+        first, second = boundary_pair(d, height, rng.choice((-1, 0, 0, 1)))
+        dx, dy = rng.randint(0, 400), rng.randint(0, 400)
+        return shifted(first, dx, dy), shifted(second, dx, dy)
+
+    def identical() -> tuple[Box, Box]:
+        """The same box twice: I = U, the top of the predicate's range."""
+        first = plain(500)
+        return first, first
+
+    def disjoint() -> tuple[Box, Box]:
+        """Two boxes that cannot touch, so I = 0 with both areas non-zero."""
+        first = plain(200)
+        return first, shifted(first, 1500, 1500)
+
+    def huge() -> tuple[Box, Box]:
+        """Two near-maximal boxes, which is the only way to reach the frozen widths.
+
+        Everything above stays under a few hundred units on a side, giving a union around
+        5e5 and an RHS of about 2**26 -- so a stimulus set without this category leaves
+        ``LHS_W = 32`` and ``RHS_W = 33`` entirely unexercised while appearing thorough.
+        Two boxes covering most of the 12-bit space give an area near ``COORD_MAX**2`` and
+        a union near twice that, which is exactly where those widths were derived from.
+        """
+        margin = rng.randint(0, 40)
+        first = Box(
+            margin,
+            margin,
+            limit - rng.randint(0, 40),
+            limit - rng.randint(0, 40),
+            rng.randint(0, p.SCORE_MAX),
+        )
+        # Offset just enough to vary the intersection without shrinking either box much.
+        return first, shifted(first, rng.randint(-40, 40), rng.randint(-40, 40))
+
+    categories = (
+        overlapping,
+        on_boundary,
+        zero_area,
+        inverted,
+        identical,
+        disjoint,
+        huge,
+    )
+    return [categories[i % len(categories)]() for i in range(count)]

@@ -42,7 +42,8 @@ RUNFLAGS   = --assert-level=error --stop-time=$(STOP_TIME)
 # and broke the build the moment the second module landed.
 RTL = src/components/nms_pkg.vhd \
       src/components/cas.vhd \
-      src/components/bitonic32.vhd
+      src/components/bitonic32.vhd \
+      src/components/iou_lane.vhd
 
 # Any RTL file not named above. Adding a module means declaring where it sits in the
 # dependency order, so an omission fails the build with a message instead of being
@@ -61,6 +62,10 @@ TB_ALL  = $(basename $(notdir $(TB_SRC)))
 # would leave the combinational path -- the PIPE_CUTS=0 point in B3.2's timing sweep --
 # unverified for correctness.
 SWEEP_tb_bitonic32 = -gPIPE_CUTS=0 -gPIPE_CUTS=2
+
+# The lane runs at the shipped threshold and at the maximum. Only T_INT=255 drives the
+# RHS above 2**31; see docs/build_log.md B4.1 for why the 33rd bit stays unreachable.
+SWEEP_tb_iou_lane  = -gT_INT=128 -gT_INT=255
 
 PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the

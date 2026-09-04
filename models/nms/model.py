@@ -163,6 +163,32 @@ def intersection_area(first: Box, second: Box) -> int:
     return width * height
 
 
+def suppresses_at(keeper: Box, candidate: Box, t_int: int) -> bool:
+    """Return the suppression verdict at an arbitrary threshold.
+
+    ``T_INT`` is a synthesis-time generic on ``iou_lane``, not a constant, so the model has
+    to be able to evaluate any of its 256 values. It matters for more than completeness:
+    with the shipped ``T_INT = 128`` the largest possible RHS is 4,292,870,400, which is
+    *under* 2**32 -- so the top bit of the 33-bit RHS is only reachable at ``T_INT > 128``,
+    and without this the width frozen in ``docs/architecture.md`` would go unexercised.
+
+    Args:
+        keeper: The surviving box.
+        candidate: The box being tested.
+        t_int: Threshold in Q0.``K_SHIFT``, ``0..2**T_INT_W - 1``.
+
+    Returns:
+        True when the candidate should be suppressed.
+
+    Raises:
+        AssertionError: If the union underflows, which the clamps make impossible.
+    """
+    inter = intersection_area(keeper, candidate)
+    union = box_area(keeper) + box_area(candidate) - inter
+    assert union >= 0, f"union underflow: I={inter} U={union}"
+    return (inter << p.K_SHIFT) >= t_int * union
+
+
 def suppresses(keeper: Box, candidate: Box) -> bool:
     """Return whether ``keeper`` suppresses ``candidate`` under the frozen predicate.
 
@@ -185,10 +211,7 @@ def suppresses(keeper: Box, candidate: Box) -> bool:
         AssertionError: If the union underflows, which the clamps make impossible. Left in
             as a live check of the proof in ``docs/architecture.md`` section 7.
     """
-    inter = intersection_area(keeper, candidate)
-    union = box_area(keeper) + box_area(candidate) - inter
-    assert union >= 0, f"union underflow: I={inter} U={union}"
-    return (inter << p.K_SHIFT) >= p.T_INT * union
+    return suppresses_at(keeper, candidate, p.T_INT)
 
 
 # --- ordering ----------------------------------------------------------------------

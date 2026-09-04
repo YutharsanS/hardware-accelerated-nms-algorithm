@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
 import pytest
 
 from models.nms import batches, bench, model
@@ -113,3 +114,56 @@ def test_thread_pool_overhead_is_measurable() -> None:
     # Small rep count: this test only checks the probe works, not the value.
     overhead = bench.thread_pool_overhead_us(reps=200)
     assert overhead > 0
+
+
+def test_predicate_agrees_with_a_vectorised_form_over_a_million_pairs() -> None:
+    """B4.1's Python half: 10**6 pairs, scalar model against a numpy reimplementation.
+
+    Driving a million pairs through GHDL would mean either a ~50 MB vector file or an LFSR
+    mirrored bit-exactly in VHDL and Python -- and that mirror would itself need a gate.
+    Splitting it is what the plan chose: 15,120 pairs through the RTL from file, and this
+    volume in Python, where the two implementations are genuinely independent (Python's
+    unbounded ints and scalar branches against numpy's int64 arrays and where-free
+    arithmetic).
+    """
+    rng = np.random.default_rng(97)
+    count = 1_000_000
+
+    # Fully uniform, so roughly half the boxes are inverted on each axis and the clamp is
+    # exercised on most rows -- which is what makes this worth a million samples rather
+    # than a curated set.
+    keeper = rng.integers(0, p.COORD_MAX + 1, size=(4, count), dtype=np.int64)
+    cand = rng.integers(0, p.COORD_MAX + 1, size=(4, count), dtype=np.int64)
+
+    def area(box: np.ndarray) -> np.ndarray:
+        return np.maximum(box[2] - box[0], 0) * np.maximum(box[3] - box[1], 0)
+
+    inter = np.maximum(
+        np.minimum(keeper[2], cand[2]) - np.maximum(keeper[0], cand[0]), 0
+    ) * np.maximum(np.minimum(keeper[3], cand[3]) - np.maximum(keeper[1], cand[1]), 0)
+    union = area(keeper) + area(cand) - inter
+    vectorised = (inter << p.K_SHIFT) >= p.T_INT * union
+
+    # int64 has room to spare: the largest RHS here is far below 2**63.
+    assert union.min() >= 0, "union underflowed in the vectorised form"
+    assert (p.T_INT * union).max() < 2**63
+
+    # .tolist() once, rather than indexing the arrays a million times.
+    scalar = [
+        model.suppresses(model.Box(*k, 0), model.Box(*c, 0))
+        for k, c in zip(
+            zip(*keeper.tolist(), strict=True),
+            zip(*cand.tolist(), strict=True),
+            strict=True,
+        )
+    ]
+
+    mismatches = np.flatnonzero(vectorised != np.array(scalar))
+    assert mismatches.size == 0, (
+        f"{mismatches.size} of {count} pairs disagree, first at index "
+        f"{mismatches[0] if mismatches.size else -1}"
+    )
+    # Both verdicts well represented, or a million samples proved one branch.
+    assert 0.2 < vectorised.mean() < 0.8, (
+        f"suppress rate {vectorised.mean():.3f} -- the sample is one-sided"
+    )
