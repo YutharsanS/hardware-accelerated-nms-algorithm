@@ -108,3 +108,56 @@ not enabled yet: it would fail the build on benign noise before a clean baseline
 **Observation:** GHDL 4.1.0 here uses the **mcode** backend, which JIT-compiles rather than
 emitting an executable, so `build/` holds only `work-obj08.cf`. `build/` is still ignored
 wholesale because the gcc/llvm backends do emit `.o` files and binaries.
+
+---
+
+### B1.0 — architecture.md corrected and frozen                         2026-09-04
+
+**Built:** [architecture.md](architecture.md) rewritten as the normative interface spec —
+record format, wire protocol, datapath widths, predicate, sort key, degenerate-box rules,
+storage, architecture, conventions and scope limits. `params.py` and `nms_pkg.vhd` mirror
+it, and a later test fails the build if the three diverge.
+
+**Why this step comes before B1.1:** architecture.md is normative and the constants are
+derived *from* it, so writing `params.py` first would have enshrined the errors below.
+This ordering was a bug in the first draft of the plan, caught in the pre-implementation
+audit.
+
+**Gate:** every derived number in the document is self-consistent, checked
+programmatically rather than by eye.
+
+**Result:** **PASS** — 16/16 checks:
+
+```
+max area 4095^2 = 16,769,025 -> 24 b     max union = 33,538,050 -> 25 b
+LHS = area<<8  = 4,292,870,400 -> 32 b   RHS = 255*union = 8,552,202,750 -> 33 b
+sort key max   = 2,097,151 -> 21 b       T_INT for IoU 0.5 = 128
+latency N^2/P + L + C + 2 = 72 cycles    frame 264 B in / 6 B out
+area budget LUT 12,318 (59.2%)  FF 7,244 (17.4%)  DSP 17 (18.9%)
+```
+
+**Three errors corrected in the document:**
+
+1. **16-bit vs 8-bit confidence contradiction.** The record carried a 16-bit score while a
+   later line read *"Fixed Thresholds and confidence variables: 8 bits"*. Resolved: the
+   score is 16 bits and normative; the 8-bit figure applies only to `T_INT`. Also separated
+   two numbers that were being conflated — `T_INT = 128` is the *value* (128/2⁸ = 0.5),
+   while 0–255 is the *range* an 8-bit field holds.
+2. **The BRAM claim was wrong twice over.** *"32 boxes × 64 bits → 2048 bits (0.001%)"* —
+   the percentage is actually **0.111%** of 1,800 Kbit, and more importantly **BRAM cannot
+   be used at all**: at P=16 the store must deliver **768 bits/cycle** while a BRAM36 port
+   delivers at most **72**. Payloads live in registers. BRAM would only suffice at P=1, so
+   low P is not "free" either.
+3. **The "22 bits per coordinate" phrasing** meant 2 × 11 for an (x, y) *pair*, but reads as
+   22 bits per single coordinate. That misreading previously produced a false claim that
+   this spec and the golden model disagreed on coordinate width. Both have always said 12;
+   the wording is now explicit and the trap is documented in place.
+
+**Also fixed:** [NMS.md](NMS.md) said the test set has **31** boxes. It has **32** —
+verified by executing the notebook. That error had made a padding decision look necessary
+when it is not. The anchor `keep_mask = 0xE1010101` and the caveat that the set contains no
+ties and no boundary pairs are now recorded there too.
+
+**Not an error, worth noting:** architecture.md already specified Basys 3 correctly. The
+stale "Nexys A7" is in the LaTeX proposal, which lives outside this repository; the plan's
+Part D carries a correction checklist for it.

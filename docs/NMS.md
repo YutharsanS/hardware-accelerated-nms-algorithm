@@ -51,13 +51,21 @@ The result is a shorter list containing just one box per real-world object — t
 
 ## Step 3: Trying it on realistic data
 
-The last part of the notebook builds a test set (`test_boxes`) of 31 boxes, designed to look like a detector's raw output:
+The last part of the notebook builds a test set (`test_boxes`) of 32 boxes, designed to look like a detector's raw output:
 
 - **Cluster A, B, C** — three groups of ~8 heavily overlapping boxes, simulating a detector finding the same cat/dog/car multiple times with different confidence levels.
 - **Cluster D** — a smaller group of 5 overlapping boxes (a "person" detection).
 - **Isolated boxes** — a few boxes placed far from everything else, which don't overlap anything and should always survive NMS untouched.
 
-Running `nms(test_boxes, 0.5)` (a 0.5 IoU threshold) reduces the 31 boxes down to 7 — one winner from each cluster, plus the isolated boxes — confirming that the algorithm correctly collapses each group of duplicates into a single best detection while leaving unrelated boxes alone.
+Running `nms(test_boxes, 0.5)` (a 0.5 IoU threshold) reduces the 32 boxes down to 7 — one winner from each cluster, plus the isolated boxes — confirming that the algorithm correctly collapses each group of duplicates into a single best detection while leaving unrelated boxes alone.
+
+The survivors sit at input-order slots 0, 8, 16, 24, 29, 30 and 31, which as a 32-bit mask is
+**`keep_mask = 0xE1010101`**. That single value is the regression anchor for the whole hardware
+build: the integer golden model, every VHDL testbench and the board must all reproduce it. Note the
+set contains **no duplicate scores and no pairs exactly on the IoU threshold**, so it exercises
+neither tie-breaking nor the boundary predicate — the two subtlest parts of the design. Those need
+the synthetic adversarial cases from the vector generator, and a build that passes only this set has
+tested very little.
 
 ## Where this fits in the bigger picture
 
