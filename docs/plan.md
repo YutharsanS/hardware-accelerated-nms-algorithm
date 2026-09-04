@@ -425,11 +425,19 @@ Benchmarked on the dev machine (**13th Gen Intel i5-13500H, 16 cores**), 32 boxe
 
 | implementation | measured | vs accelerator @P=16 (0.72 µs) |
 |---|---|---|
-| notebook float NMS, as written | **583.07 µs** | **810× faster** |
-| planned integer NMS (same predicate as the RTL) | **473.64 µs** | **658× faster** |
-| numpy all-pairs, vectorised — fair Python upper bound | **83.09 µs** | **115× faster** |
+| notebook float NMS, as written | 37–446 µs | 52–619× faster |
+| planned integer NMS (same predicate as the RTL) | 45–477 µs | 62–662× faster |
+| numpy all-pairs, vectorised — fair Python upper bound | **36–57 µs** | **50–79× faster** |
+| integer all-pairs (what the RTL implements) | 852–948 µs | 1184–1317× faster |
 
-**Yes — decisively faster than the Python testbench, by 115× even against a properly vectorised
+**Corrected at B1.4.** The single-number figures first recorded here (583 / 474 / 83 µs) were
+measured on one random batch. Re-measured across four committed cases, the spread *between
+batches* is up to 10.7× — wider than the spread between implementations — because the
+sequential loop short-circuits as boxes get suppressed. `all_survive` is its worst case
+(nothing suppressed, no short-circuit) and `all_equal` its best. Quoting one number without
+naming the batch was misleading, so the ranges above replace it.
+
+**Yes — decisively faster than the Python testbench, by 50–79× even against a properly vectorised
 numpy implementation** that uses the same all-pairs structure as the proposed hardware.
 
 **The 16 cores do not help.** A bare thread-pool round trip with *zero work* measures **18.47 µs** on
@@ -441,7 +449,7 @@ asymmetry is precisely the accelerator's argument.
 Caveat to keep in the report so it cannot ambush you: at N=32 numpy is *interpreter-overhead*
 dominated, not compute dominated — ~30 numpy calls at 1–3 µs of overhead each. A tuned C/AVX2
 implementation is estimated below at ~0.23 µs, i.e. roughly at parity with the accelerator. The
-honest claim is **"115–810× faster than Python, ~80× faster than an embedded CPU, at parity with
+honest claim is **"50–660× faster than Python, ~80× faster than an embedded CPU, at parity with
 hand-tuned desktop SIMD."**
 
 ### Estimated baselines for other processor classes
@@ -598,7 +606,7 @@ it, at the cost of a 32:1 crossbar per lane and a data-dependent (non-determinis
 trade was made deliberately; say so.
 
 **3. The measured speedup is large against Python, modest against tuned C.** Part 1e has the numbers:
-**115–810× faster than Python** (measured on the dev machine), ~80× faster than a Cortex-M7,
+**50–660× faster than Python** (measured across four cases), ~80× faster than a Cortex-M7,
 ~2× faster than a Cortex-A53, and roughly at parity with hand-tuned AVX2 on a 3 GHz x86. State the
 processor class every time the word "faster" appears; an unqualified "faster than any processor" is
 false and is the one claim an examiner will test.
@@ -1205,7 +1213,7 @@ it shows which claims were tested rather than assumed. **Every row is a claim th
 | "Fixed-length frame, the receiver is a byte counter" | One dropped byte desynchronises **permanently**; every later frame looks like an RTL bug | magic + CRC-8 + `seq` + idle timeout |
 | Keeper-serial FSM is fast enough | **128 of 259 cycles are pipeline refill** — the `L` drain paid 32 times | All-pairs restructure: **72 cycles, 4× better** |
 | Max tree beats the sorter, so the sorter is decorative | True *only* for keeper-serial. Rank-ordered rows need the full ranking up front | **Sorter is architecturally required** |
-| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 115–810× vs Python | Claim must name the processor class |
+| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 50–660× vs Python | Claim must name the processor class |
 | Suppression matrix needs 32×32 = 1,024 FF | Rows are produced and consumed in rank order 1 cycle apart | **2-row buffer, ~74 FF.** −950 FF |
 | `index_table` read once per rank | Fill reads rank `r` while resolve reads `r−1` — **two ports** | Carry `idx_r` with its row |
 | Part 1d cycle table | P=1/2/4 dropped the `(C+1)` term | 1029/517/261 → **1032/520/264** |

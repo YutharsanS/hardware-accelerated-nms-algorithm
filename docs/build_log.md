@@ -298,3 +298,69 @@ against stale expectations.
 **Size:** 724 kB in 125 files, of which `.pairs` is 240 kB. Written for 5 cases rather than
 all 20 — all 20 would be ~900 kB of largely redundant rows, and the Python property test
 covers the remainder.
+
+---
+
+### B1.4 — CPU baseline                                                 2026-09-04
+
+**Built:** `models/nms/bench.py` — the notebook's float algorithm, both integer forms, a
+vectorised numpy all-pairs, a thread-pool dispatch probe, and a multi-batch suite.
+
+**Gate:** every implementation agrees on `keep_mask`, and the benchmark table prints.
+
+**Result:** **PASS** — 41 passed, 1 skipped (deliberately, see below).
+
+```
+host: 13th Gen Intel(R) Core(TM) i5-13500H
+accelerator core: 72 cycles at 100 MHz = 0.72 us
+
+  implementation        notebook32  all_survive   all_equal  rand_seed0    best   worst
+  notebook float              77.4        445.7        37.3       341.2    37.3   445.7
+  integer sequential          85.5        476.7        44.6       367.7    44.6   476.7
+  integer all-pairs          886.4        947.5       852.4       931.9   852.4   947.5
+  numpy all-pairs             40.3         57.0        36.0        53.4    36.0    57.0
+
+  thread-pool dispatch, zero work: 20.1 us (49% of the fastest implementation)
+```
+
+**A figure recorded earlier in the plan was wrong, and this gate corrected it.** Part 1e
+originally quoted 583 / 474 / 83 µs and "115× faster than numpy", all measured on a *single
+random batch*. Re-measured across four committed cases, the spread **between batches** is
+up to **10.7×** — wider than the spread between implementations — because the sequential
+loop short-circuits as boxes get suppressed. `all_survive` is its worst case (nothing
+suppressed, so no short-circuit at all) and `all_equal` its best (everything suppressed
+after the first keeper). Quoting one number without naming the batch was misleading.
+Part 1e now carries ranges: **50–79× versus numpy**, 50–660× versus Python overall.
+
+**The all-pairs form is the slowest in software while being the fastest in hardware** —
+852–948 µs against the sequential loop's 45–477 µs. It evaluates all `N² = 1024` pairs
+unconditionally where the sequential form short-circuits. That redundant work is exactly
+what a CPU pays for and what P parallel lanes get for free, so this is the argument for the
+restructure, quantified. Note also that its cost is nearly **constant** across batches
+(852–948 µs, a 1.11× spread) — the same data-independence the hardware has, visible in
+software.
+
+**A second finding: the integer predicate does not merely suit the hardware, it removes a
+crash.** The gate initially failed because `float_reference` disagreed with the integer
+model on `degenerate` and on random hostile batches. The cause is not rounding — it is that
+the notebook writes an unguarded `iou = intersection_area / union_area`, and two zero-area
+boxes give `I = 0, U = 0`. The `degenerate` case alone contains **49** such pairs.
+
+My first version had quietly guarded that division with `if union else 0.0`, i.e. it was
+*nicer than the notebook* and hid the problem. Rewritten to be faithful, so
+`float_reference` now raises `ZeroDivisionError` exactly where the original would, and a
+test asserts precisely that while the integer forms return a defined answer (`0 >= 0`,
+suppress). The skipped test is `test_float_agrees_where_it_is_defined[degenerate]`, skipped
+for that reason rather than because it is inconvenient.
+
+**Also asserted rather than assumed:** for coordinates up to 4095 the float and integer
+predicates **cannot** disagree on non-degenerate input. Deciding `I/U >= 0.5` differently
+from `2I >= U` would need `|2I − U| < 1` with both integers, i.e. `2I == U`, and 0.5 is
+exactly representable. float64 carries 53 mantissa bits against values below 2²⁵ here,
+leaving no room for the rounding that would make a boundary pair ambiguous. Verified over
+5,000+ sampled pairs. The conclusion would **not** hold for float32 or much larger
+coordinates, which is why it is a test and not a comment.
+
+**Thread-pool dispatch costs 20.1 µs of zero work — 49% of the fastest implementation.**
+"Use more cores" cannot pay at N=32: dispatch alone is half the computation, and the
+resolve loop is inherently serial since each keeper depends on all previous ones.
