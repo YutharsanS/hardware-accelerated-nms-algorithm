@@ -3,11 +3,18 @@ name = "hardware-accelerated-nms-algorithm"
 version = "0.1.0"
 description = "Hardware-accelerated NMS algorithm: VHDL RTL + Python golden model + dev tooling"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Only needed to save rendered images in models/gs/render.py.
+render = ["pillow>=10.0"]
 
 [dependency-groups]
 dev = [
     "nbstripout>=0.9.1",
+    "pytest>=8.0",
     "ruff>=0.16.4",
 ]
 
@@ -24,7 +31,12 @@ extend-exclude = [
 "test_*.py" = ["S101", "D"]
 "*_test.py" = ["S101", "D"]
 "tests/**/*.py" = ["S101", "D"]
-"notebooks/**/*.ipynb" = ["T201", "D"]
+# Notebooks are exploratory: printing is the point and docstrings are not required.
+# The glob must be depth-independent -- golden-model.ipynb lives in models/, not in a
+# notebooks/ directory, so the previous "notebooks/**/*.ipynb" never matched anything.
+"*.ipynb" = ["T201", "D"]
+# CLI entry points exist to print their report; library modules return strings instead.
+"**/__main__.py" = ["T201"]
 
 [tool.ruff.lint]
 extend-select = [

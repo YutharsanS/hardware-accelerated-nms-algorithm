@@ -70,3 +70,24 @@ __pycache__/
 models/data/scenes/
 *.ply
 *.npz
+
+# =========================
+# GHDL build directory
+# =========================
+
+# `make` analyses into build/. The mcode backend only leaves a .cf library there, but the
+# gcc/llvm backends emit .o files and elaborated executables, so ignore the directory.
+build/
+
+# =========================
+# Vivado / xsim artefacts
+# =========================
+
+vivado*.log
+vivado*.jou
+vivado*.str
+xvlog.pb
+xelab.pb
+xsim.dir/
+.Xil/
+*.wdb
