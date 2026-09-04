@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import contextlib
 import itertools
 import json
 import random
@@ -39,11 +38,10 @@ def test_embedded_notebook_set_matches_the_notebook() -> None:
         "".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"
     )
     scope: dict[str, object] = {}
-    # The notebook's trailing cells are bare expressions that raise outside Jupyter, so a
-    # failure here is expected and harmless -- what matters is whether test_boxes got
-    # defined before that point, which the assertion below checks.
-    with contextlib.suppress(Exception):
-        exec(code, scope)  # noqa: S102 - the notebook is repository content
+    # B1.5 rewired the notebook onto models/nms/model.py, and it now executes cleanly, so
+    # this deliberately does NOT suppress exceptions -- a notebook that raises is a failure.
+    # Before that it ended in bare expressions that raised outside Jupyter.
+    exec(code, scope)  # noqa: S102 - the notebook is repository content
     raw = scope.get("test_boxes")
     assert raw is not None, "notebook no longer defines test_boxes"
     assert len(raw) == len(batches.NOTEBOOK_32)

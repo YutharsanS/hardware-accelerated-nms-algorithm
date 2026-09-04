@@ -364,3 +364,59 @@ coordinates, which is why it is a test and not a comment.
 **Thread-pool dispatch costs 20.1 µs of zero work — 49% of the fastest implementation.**
 "Use more cores" cannot pay at N=32: dispatch alone is half the computation, and the
 resolve loop is inherently serial since each keeper depends on all previous ones.
+
+---
+
+### B1.5 — notebook rewired onto the shared module                      2026-09-04
+
+**Built:** [golden-model.ipynb](../models/golden-model.ipynb) rewritten — 13 cells, 8
+markdown and 5 code. It keeps the narrative (what a box is, how IoU works, the width
+table, what the test set does) and **imports the algorithm** instead of defining it.
+
+**Gate:** the notebook executes and still reports 7 survivors, now via the module.
+
+**Result:** **PASS**, exit 0:
+
+```
+boxes in         32
+survivors        7 at slots [0, 8, 16, 24, 29, 30, 31]
+keep_mask        0xE1010101
+both forms agree True
+matches anchor   True
+```
+
+**This closes loophole L5** — two divergent implementations of the same algorithm.
+`def calculate_iou` and `def nms` are gone from the notebook; there is now exactly one
+implementation of NMS in the repository.
+
+**`test_boxes` deliberately stays defined in the notebook.** It could have been imported
+from `batches.NOTEBOOK_32`, but then `test_embedded_notebook_set_matches_the_notebook`
+would be comparing `batches` against itself. Keeping the notebook as the source of truth,
+with `batches` holding an independently-written quantised copy that a test asserts equal,
+preserves a genuine cross-check.
+
+**The test got stricter as a result.** It previously wrapped the notebook's execution in
+`contextlib.suppress(Exception)`, because the old notebook ended in bare expressions that
+raise outside Jupyter. The rewritten notebook executes cleanly, so the suppression is gone
+and **a notebook that raises is now a test failure**.
+
+**Two problems found and fixed while doing this:**
+
+1. **My cell-source helper dropped the last line of every cell.** A `[:-1]` intended to
+   trim a trailing blank ate a real line instead, truncating `test_boxes` mid-literal —
+   `SyntaxError: '[' was never closed`. Caught immediately by running the notebook rather
+   than eyeballing it. Regenerated from `git show HEAD:` with an assertion that the
+   recovered `test_boxes` source still ends in `]`.
+2. **`from models.nms import ...` would fail in Jupyter.** Jupyter puts the *notebook's*
+   directory on `sys.path`, so launching from `models/` leaves `models.nms` unresolvable
+   even though it works from the repository root. Added a bootstrap cell that walks up to
+   the directory holding `pyproject.toml`. **Verified both ways** — from the repo root and
+   with `cwd=models/`.
+
+**nbstripout:** the repo has `*.ipynb filter=nbstripout` in `.gitattributes`, and it
+renumbers cell IDs sequentially. Ran it explicitly so the committed file is already in its
+canonical form; the only change is IDs, content is byte-identical. That avoids the filter
+silently rewriting the file at commit time.
+
+**Stage 1 complete.** 176 tests pass, 1 skipped by design (`float_reference` on
+`degenerate`, which divides by zero as the original did). No RTL yet — B2.1 is next.
