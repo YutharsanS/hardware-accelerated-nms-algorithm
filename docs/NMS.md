@@ -1,64 +1,89 @@
 # NMS Golden Model
 
-This document explains, in plain terms, what the golden model notebook (`models/golden-model.ipynb`) does and how it's put together. It's meant for a reviewer who wants to understand the notebook's logic without necessarily running it.
+This document explains, in plain terms, what the golden model (`models/nms_model.py`, narrated
+in `models/golden-model.ipynb`) does and how it's put together. It's meant for a reviewer who
+wants to understand the logic without necessarily running it.
+
+**The notebook is narrative, not the implementation.** It imports `models/nms_model.py` for the
+algorithm rather than redefining it — one implementation only, so the two can never drift apart.
+The float `calculate_iou`/`nms` shown early in the notebook are kept purely as the "as originally
+written" comparison baseline (`models/bench_cpu.py` times it against the real thing); everything
+downstream of that uses the integer model.
 
 ## What problem is this solving?
 
 An object detector (e.g. something that finds cats, dogs, cars in an image) usually doesn't just draw one box around an object — it proposes many overlapping boxes for the same object, each with its own confidence score. **Non-Maximum Suppression (NMS)** is the clean-up step that takes all those overlapping guesses and keeps only the best one per object, discarding the redundant ones.
 
-The "golden model" is a plain Python reference implementation of this algorithm. It doesn't run on the FPGA — its job is to produce trusted, known-correct outputs that the VHDL hardware implementation can later be checked against.
+The golden model is a plain Python reference implementation of this algorithm. It doesn't run on the FPGA — its job is to produce trusted, known-correct outputs that the VHDL hardware implementation can later be checked against, bit-exact.
 
 ## What a box looks like
 
-Every detection is represented as a tuple of 5 numbers:
+Every detection is a `Box(x, y, a, b, score)`, all integers, exactly the widths the wire format uses (`docs/architecture.md`'s frozen interface spec):
+
+- `(x, y)` — the lower-left corner of the box, u12
+- `(a, b)` — the upper-right corner of the box, u12
+- `score` — the detector's quantised confidence, u16: `score = round(confidence * 65535)`
+
+No floats reach the model past `quantise_score`. This is deliberate: the RTL has no divider and
+no floating-point unit, so the golden model has to prove the algorithm works entirely in integer
+arithmetic before any VHDL is written.
+
+## Step 1: Measuring overlap without dividing
+
+Real NMS compares `IoU = intersection / union` against a threshold. The hardware never computes
+that ratio — dividing is expensive and IoU is only ever used as one side of a `>=` comparison, so
+the division is cross-multiplied away instead:
 
 ```
-(x, y, a, b, confidence)
+(intersection << 8) >= T_INT * union      -- T_INT = 128 means threshold 0.5
 ```
 
-- `(x, y)` — the lower-left corner of the box
-- `(a, b)` — the upper-right corner of the box
-- `confidence` — how sure the detector is that this box contains an object (0 to 1)
-
-## Step 1: Measuring overlap with IoU
-
-To decide whether two boxes are "duplicates" of the same object, the notebook needs a way to measure how much two boxes overlap. That's what **IoU (Intersection over Union)** does — it's a ratio between 0 and 1:
-
-- `IoU = 0` means the boxes don't overlap at all
-- `IoU = 1` means the boxes are identical
-
-It's calculated as:
-
-```
-IoU = (area where the boxes overlap) / (total area covered by both boxes combined)
-```
-
-The notebook builds this up in stages:
-
-1. A first cell works through the IoU math manually on two example boxes, just to sanity-check the arithmetic step by step (find each box's area, find the overlapping region, then divide).
-2. That logic is then wrapped into a reusable function, `calculate_iou(bbox1, bbox2)`, which takes two boxes and returns their IoU as a float.
+`nms_model.suppresses(keeper, candidate)` evaluates exactly this. Both `intersection_area` and
+`box_area` clamp width and height to `max(0, ...)` before multiplying, so a zero-area or inverted
+box (`a <= x` or `b <= y`) always contributes `0`, never a negative number — there is no
+`ZeroDivisionError` and no signed arithmetic anywhere in the predicate. Two degenerate boxes
+compared against each other give `intersection=0, union=0`, and since `0 >= 0` is true, they
+suppress each other regardless of position — a deliberate consequence of the `>=` rule, not a
+special case.
 
 ## Step 2: The NMS algorithm itself
 
-The `nms(boxes, iou_threshold)` function is the core of the notebook. Given a list of boxes and a threshold, it decides which boxes to keep:
+Two implementations are provided, and they are required to produce identical output on every
+input:
 
-1. **Sort by confidence** — all boxes are ordered from most confident to least confident.
-2. **Walk through the list, most confident first.** Each box that hasn't already been thrown out is kept as a "winner" for its object.
-3. **Suppress overlapping boxes** — every remaining box is compared against that winner using IoU. If the overlap is greater than or equal to `iou_threshold`, it's considered a duplicate of the winner and is discarded.
-4. This repeats until every box has either been kept as a winner or discarded as a duplicate.
+- **`nms_sequential`** — the textbook winner-takes-all loop: walk boxes in ranked order, each
+  still-valid box becomes a keeper and immediately suppresses every other still-valid box it
+  beats. This is the authority on what NMS *means*.
+- **`nms_allpairs`** — the rank-ordered matrix-then-resolve structure the RTL actually
+  implements: every pairwise suppression is evaluated up front, independent of which boxes turn
+  out to be keepers, then resolved one rank at a time. This is what lets the hardware overlap the
+  suppression-row computation with the resolve step instead of draining the pipeline once per
+  keeper (`docs/plan.md` Part 1e).
 
-The result is a shorter list containing just one box per real-world object — the one the detector was most confident about.
+Ranking uses `sort_key(score, index) = score * 32 + (31 - index)` rather than sorting on score
+alone. Because every index is unique, this key is a **strict total order** — ties are
+structurally impossible, and descending `sort_key` is descending score with ties broken by the
+lower index. That matters more than it looks: at 16-bit score resolution, 32 draws from the same
+distribution collide with probability ≈86%, so ties are the common case, not an edge case.
+
+An **absent slot** (`present_mask` bit clear) is never selected as a keeper and never suppresses
+anything; since `keep_mask` starts at all-zero, an absent box's output bit stays provably 0.
 
 ## Step 3: Trying it on realistic data
 
-The last part of the notebook builds a test set (`test_boxes`) of 31 boxes, designed to look like a detector's raw output:
-
-- **Cluster A, B, C** — three groups of ~8 heavily overlapping boxes, simulating a detector finding the same cat/dog/car multiple times with different confidence levels.
-- **Cluster D** — a smaller group of 5 overlapping boxes (a "person" detection).
-- **Isolated boxes** — a few boxes placed far from everything else, which don't overlap anything and should always survive NMS untouched.
-
-Running `nms(test_boxes, 0.5)` (a 0.5 IoU threshold) reduces the 31 boxes down to 7 — one winner from each cluster, plus the isolated boxes — confirming that the algorithm correctly collapses each group of duplicates into a single best detection while leaving unrelated boxes alone.
+`models/gen_vectors.py`'s `case_notebook31()` reuses the notebook's own 32-box dataset — three
+clusters of ~8 heavily overlapping boxes (cat/dog/car) plus a 5-box cluster (person) plus 3
+isolated boxes that never overlap anything. Running the golden model over it with every slot
+present collapses it to **7 survivors** — one winner per cluster, plus the 3 isolated boxes —
+and `models/test_model.py` asserts this exact count as its primary acceptance check. (The case is
+still named `notebook31` per the original plan, even though the dataset itself has always held 32
+entries.)
 
 ## Where this fits in the bigger picture
 
-This notebook is the software "answer key." Once the VHDL hardware pipeline (bitonic sort + comparison logic) is built, its output on the same test data should match what this notebook produces. Differences between the two would point to a bug in the hardware implementation rather than in the underlying algorithm.
+The golden model is the software "answer key." `models/gen_vectors.py` emits `models/data/*.hex`
+(the packed 8-byte records plus `present_mask`) and `*.mask` (the expected `keep_mask`), computed
+by this same model, for the VHDL testbenches to replay. Once the hardware pipeline (bitonic sort
++ IoU lanes + resolve) is built, its output on the same vectors must match these files bit-exact.
+Any difference points to a bug in the hardware implementation, never in the algorithm — the two
+Python implementations above already had to agree with each other first.
