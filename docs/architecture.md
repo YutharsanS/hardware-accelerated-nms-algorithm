@@ -37,7 +37,7 @@ conversions below therefore run on the host, never on the FPGA.
 | x / y / a / b | u | 12 | 0 | 12 | none, already integral | 0 to 4095 |
 | confidence | u | 0 | 16 | 16 | `floor(c * (2^16 - 1))` | c in [0, 1] |
 | threshold `T_INT` | u | 0 | 8 | 8 | `min(floor(T * 2^8), 255)` | T in [0, 1] |
-| sort key | u | 21 | 0 | 21 | `(conf << 5) or (~idx & 0x1F)` | 32 boxes max |
+| sort key | u | 21 | 0 | 21 | `(conf << 5) \| (~idx & 0x1F)` | 32 boxes max |
 
 Intermediate signal widths (`area`, `t_w`/`t_h`, `w`/`h`, `intersection_area`,
 `union_area`, LHS, RHS) are tabulated in `models/golden-model.ipynb` and are
@@ -84,6 +84,8 @@ ceiling of `4,294,967,295` -- it fits with roughly 0.05% headroom. The golden
 model asserts every intermediate against its declared width rather than trusting
 this table.
 
+- Behaviour when `union_area == 0` (two degenerate boxes). The behavior let it survive as an isolated bounding box. 
+
 ## Tie-breaking
 
 A bitonic sorting network is not stable, so two boxes with equal quantised
@@ -104,9 +106,6 @@ comparators get wider.
 
 ## Open items
 
-- Behaviour when `union_area == 0` (two degenerate boxes). The floating-point
-  model raises `ZeroDivisionError`; the integer criterion evaluates without error.
-  The hardware behaviour must be chosen deliberately and mirrored in the model.
 - Recovery of the original box index after sorting, needed for the keep-mask
   export consumed by the VHDL testbench.
 
