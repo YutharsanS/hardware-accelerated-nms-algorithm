@@ -7,7 +7,7 @@
 #   make tb_cas          one testbench (analyse, elaborate, run)
 #   make tb_hello        toolchain smoke test on the pre-existing hello_tb.vhdl
 #   make lint            ruff check + format check on the Python models
-#   make synth MOD=cas   Vivado synthesis of one module (blocked, see docs/plan.md M1)
+#   make synth MOD=cas   Vivado out-of-context synthesis + implementation of one module
 #   make clean           remove build artefacts
 #
 # Language policy (docs/plan.md Part 2): synthesisable RTL is written in the VHDL-93
@@ -134,12 +134,18 @@ tb_hello: | $(WORKDIR)
 
 # --- Vivado ------------------------------------------------------------------------
 
-# Blocked: this install enumerates zero parts. See docs/plan.md M1 for the diagnosis.
+# Area and timing are measured after route_design, not after synth_design: a post-synthesis
+# number omits routing delay, and P1 is a claim about real Fmax. PERIOD sets the clock
+# constraint the slack is measured against; GENERICS passes through to synth_design, which
+# is how B3.2 sweeps PIPE_CUTS.
+#
+#   make synth MOD=bitonic32 PERIOD=20 GENERICS="PIPE_CUTS=0"
 synth:
-	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module>"; exit 1; }
+	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"]"; exit 1; }
 	@command -v vivado >/dev/null 2>&1 || { \
 	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
-	vivado -mode batch -nolog -nojournal -source scripts/synth.tcl -tclargs $(MOD)
+	vivado -mode batch -nolog -nojournal -source scripts/synth.tcl \
+	  -tclargs $(MOD) $(PERIOD) $(GENERICS)
 
 # --- Aggregate ---------------------------------------------------------------------
 

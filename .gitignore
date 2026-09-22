@@ -86,6 +86,8 @@ build/
 vivado*.log
 vivado*.jou
 vivado*.str
+# Dropped in the working directory by synth_design, not under build/.
+clockInfo.txt
 xvlog.pb
 xelab.pb
 xsim.dir/

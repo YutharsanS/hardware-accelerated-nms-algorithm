@@ -766,3 +766,159 @@ anything structural.
 
 **Standing regression:** `make test` = 188 pytest passing (1 skipped by design) + 6 VHDL
 runs across 4 testbenches + the smoke test, in 36 s.
+
+---
+
+### M1 — Vivado enumerates zero parts: the cause was the licence    2026-09-22
+
+**The gate that blocked B2.2, B3.2 and B4.2 since 2026-09-04 is cleared.** `get_parts`
+returns 1041 parts and `xc7a35tcpg236-1` resolves, reporting 20,800 LUT / 41,600 FF /
+90 DSP.
+
+**It was never a broken install.** Every hypothesis that treated it as one was wrong, and
+each cost an install cycle:
+
+- *Missing Digilent board files.* Wrong — `get_parts` returned 0 for `*`, so no part of any
+  family was visible, not merely the Basys 3 preset.
+- *Incomplete device install.* Wrong — `data/parts` held 6.5 GB, `CustomerPartsList.txt`
+  listed `xc7a35t-cpg236-1`, and `devint/artix7/xc7a35t/cpg236/` was fully populated.
+- *Missing generated device list.* Half right and a genuine second defect:
+  `2026.1/data/installed.devices` did not exist. Regenerating it needs the installer to see
+  a **new device family** — it short-circuits with "No new device families to add", so
+  adding DocNav does nothing and adding SoCs works. The file is now correct, listing 16
+  families including `artix7`. Fixing it alone did **not** restore the parts.
+
+**The actual cause: Vivado 2026.1 gates devices by licence tier.** `libxv_device.so` carries
+the logic, and its own strings state it plainly:
+
+```
+DBG_enableDevicesByLicense: ALVEO tier detected. Enabling Alveo devices.
+DBG_enableDevicesByLicense: BASIC tier detected. Enabling Basic devices.
+DBG_enableDevicesByLicense: PRO/ENTERPRISE/GOLD tier detected. Enabling Basic, Core, All and Alveo devices.
+```
+
+The licence carries **both** tiers — four features stamped `License_Tier:ALVEO` and four
+stamped `License_Tier:BASIC`. Vivado latched onto ALVEO, which enables Alveo devices *only*;
+with no Alveo card installed, every Artix-7 part was filtered out and `get_parts` returned 0
+with no diagnostic. Dropping the four ALVEO blocks makes it report BASIC and enumerate
+normally. `~/.Xilinx/Xilinx.lic` now holds the BASIC-only form; the original is at
+`~/.Xilinx/Xilinx_full.lic.bak`.
+
+**Why it took so long to find:** the failure is silent by construction. Vivado prints
+`A valid Vivado Design Suite ALVEO license has been detected` as an *INFO* at every startup
+and never connects it to the empty part list, so the one line naming the cause reads as
+routine. plan.md Part 0 had recorded the Alveo licence and dismissed it as irrelevant
+because Artix-7 35T is a no-charge device; that inference was the single wrong assumption,
+and it is now corrected in place.
+
+**Deliverable:** `scripts/synth.tcl`, out-of-context synthesis **through `route_design`**.
+Post-synthesis numbers omit routing delay and P1 is a claim about real Fmax, so a
+synth-only figure would flatter it. OOC is not optional either: `bitonic32` presents
+2 × 32 × 21 bits at its boundary, which no 236-pin package can carry.
+
+---
+
+### B3.2 — bitonic32 area and timing, measured                      2026-09-22
+
+`make synth MOD=bitonic32 PERIOD=10 GENERICS="PIPE_CUTS=<n>"`, post-route, OOC,
+`xc7a35tcpg236-1`, 10 ns constraint:
+
+| `PIPE_CUTS` | LUT | % device | LUT/CAS | FF | CARRY | critical | Fmax | 100 MHz |
+|---|---|---|---|---|---|---|---|---|
+| 2 (shipped) | 9,596 | 46.1% | 40.0 | 1,344 | 720 | 18.570 ns | 53.9 MHz | no |
+| 4 | 9,758 | 46.9% | 40.7 | 2,688 | 720 | 11.392 ns | 87.8 MHz | no |
+| **8** | **8,112** | **39.0%** | **33.8** | 5,376 | 720 | 8.386 ns | **119.2 MHz** | **yes, WNS +1.614 ns** |
+| 15 | 7,680 | 36.9% | 32.0 | 10,080 | 720 | 5.335 ns | 187.4 MHz | yes |
+
+#### The first version of these numbers was wrong, and the method is why
+
+The initial `scripts/synth.tcl` counted primitives with
+`get_cells -hier -filter {PRIMITIVE_GROUP == LUT}` instead of reading `report_utilization`.
+That query does not agree with the report — it returned 13,344 where the report said 9,596,
+and on `iou_lane` it reported 0 DSP where the report said 2. It is not a constant factor
+either (2.00× on `bitonic32` at `PIPE_CUTS = 15`, 1.39× at `PIPE_CUTS = 2`, 1.55× on
+`iou_lane`), so the first table could not be rescued by scaling and every point was
+re-measured. **The gate is judged on `report_utilization`**, which is the figure the
+datasheet, the timing reports and every other tool quote.
+
+Recorded because the wrong numbers inverted the conclusion: they showed the sorter taking
+64–74% of the device and the §1 cost model failing by 1.85×, which would have put P2 in
+doubt and invited a redesign that the real numbers do not call for.
+
+#### The structure is exactly as designed, and the cost model holds
+
+Two invariants hold at every point, which is what makes the LUT figure trustworthy rather
+than a mis-elaboration: **CARRY is 720 = 240 × 3** at every `PIPE_CUTS`, and **FF is exactly
+`PIPE_CUTS` × 672** (672 = 32 keys × 21 bits). The netlist is the network the RTL describes.
+
+**plan.md §1's per-CAS estimate is essentially right.** It predicts `8 + 2·⌈W/2⌉` = 30 LUT6
+per CAS at W=21. A standalone `cas` measures **32 LUT / 3 CARRY**, critical path 4.348 ns —
+6.7% over. Inside the network the figure is higher and depends on pipelining: 40.0 LUT/CAS
+at `PIPE_CUTS = 2`, falling to 32.0 at `PIPE_CUTS = 15`, where it converges on the
+standalone cost. The §1 total of 7,200 LUT / 34.6% is met almost exactly at
+`PIPE_CUTS = 15` (7,680 / 36.9%) and exceeded by 13% at the setting actually chosen.
+
+#### Pipelining buys timing *and* area, so `PIPE_CUTS = 8` is not a trade
+
+The expected trade — more cuts, more area — does not appear. LUT is flat from 2 to 4
+(9,596 → 9,758) and then **falls** to 8,112 at 8 and 7,680 at 15, a 20% reduction against
+the shipped setting, while Fmax rises 3.5×. Deep combinational chains force logic
+replication; cutting them lets the tool share instead. Flip-flops are the only price, and
+at 10,080 they are still 24% of the 41,600 available.
+
+**`PIPE_CUTS = 8` is the lowest swept value that meets 100 MHz**, at +1.614 ns, and it is
+also cheaper in LUTs than the shipped 2. Correctness there is already covered: B3.1 verified
+every `PIPE_CUTS` from 0 to 15, so whichever value the timing report demanded was going to
+be known-good. That decision paid off exactly as intended.
+
+#### Estimate vs measured
+
+**P1 was pessimistic, not optimistic, and is now settled.** It projected 22–37 ns /
+27–45 MHz for the network combinationally; `PIPE_CUTS = 2` measures 18.570 ns / 53.9 MHz.
+Per sub-stage that is ~3.7 ns against the 1.5–2.5 ns assumed, but across fewer levels in the
+critical segment than the estimate's arithmetic implied. **The 100 MHz claim survives — at
+`PIPE_CUTS = 8`, not at the shipped 2.** `CLOCK_HZ` is frozen at 100 MHz and `BAUD_DIV`
+derives from it, so this is a system constant rather than a target, and it fixes the
+setting.
+
+**Standing regression:** unchanged and green after the Makefile edit — `make test` = 188
+pytest passing (1 skipped by design) + 6 VHDL runs across 4 testbenches + the smoke test.
+
+---
+
+### B4.2 — the IoU lane: area passes, the DSP target does not        2026-09-22
+
+`make synth MOD=iou_lane`, post-route, OOC, `xc7a35tcpg236-1`, 10 ns constraint, shipped
+generics (`T_INT = 128`, `K_SHIFT = 8`):
+
+| | measured | target | verdict |
+|---|---|---|---|
+| LUT | 109 (0.5%) | ≤ 300 | **passes, with 2.8× headroom** |
+| FF | 101 | — | — |
+| CARRY4 | 30 | — | — |
+| DSP | **2** | **exactly 1** | **misses** |
+| Fmax | 170.1 MHz | ≥ 100 MHz | passes, WNS +4.120 ns |
+
+**B4.1 predicted both the failure and its cause.** It recorded that the design has exactly
+one `*` on a per-pair value (`s1_w * s1_h`), that `T_INT * union` is a constant multiply
+which should fold, and that *"if B4.2 reports more than 1 DSP, the cause will be
+`T_INT * union` failing to fold rather than anything structural."* That is precisely what
+happened, and Vivado names it in the synthesis log:
+
+```
+DSP Report: Generating DSP union, operation Mode is: C-(A2*B2)'.
+DSP Report: Generating DSP s2_inter_reg, operation Mode is: (A2*B2)'.
+```
+
+Two DSP48E1s are generated — one for `union`, one for `s2_inter_reg`. The constant multiply
+did not fold; it was mapped to a DSP alongside the genuine one. Nothing structural is wrong,
+which is why area and timing both pass comfortably.
+
+**`P = 16` fits, so the miss is not fatal.** At 2 DSP per lane, 16 lanes use **32 of 90
+DSPs (35.6%)** and **1,744 LUT (8.4%)**. With the sorter at `PIPE_CUTS = 8` that is
+**47.4% of LUTs and 35.6% of DSPs for sorter plus lanes**, leaving over half the device for
+the FSM and UART. **`P = 16` is no longer provisional.**
+
+The DSP target remains worth recovering — at 1 DSP per lane the budget halves to 16 — but it
+is an optimisation with headroom behind it, not a blocker. Forcing the fold is the next
+candidate, and it does not change any interface.

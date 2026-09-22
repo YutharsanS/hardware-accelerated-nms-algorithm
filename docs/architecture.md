@@ -211,7 +211,8 @@ At P = 16 that is **72 cycles = 0.72 µs** on the 100 MHz clock. There is no dat
 worst case = best case for every possible input. That is the "deterministic execution" property, and
 it is the claim that actually holds.
 
-**Area budget at P = 16** (estimates; measured figures go to `docs/results.md`):
+**Area budget at P = 16** (estimates; measured figures are in [results.md](results.md), which
+supersedes this table wherever a block has actually been built):
 
 | block | LUT | FF | DSP |
 |---|---|---|---|

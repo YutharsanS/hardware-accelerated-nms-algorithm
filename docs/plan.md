@@ -42,8 +42,9 @@ pivoting.
    language policy) is reused with `(depth, index)` keys.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
-`get_parts xc7a35tcpg236-1` returns 1 — every synthesis gate in either direction depends on it, and
-the install carries only an Alveo licence.
+`get_parts xc7a35tcpg236-1` returns 1 — every synthesis gate in either direction depends on it. It
+returns 1 as of M1's resolution; if it ever returns 0 again, suspect the licence tier before the
+install (see the licence bullet in Part 0).
 
 ## Part 0 — 3DGS exploration: gather the data, then decide the pivot
 
@@ -156,9 +157,14 @@ Reviewing it against the repo also turned up things that were wrong, not merely 
   for an XC7A35T build.
   - **Vivado is not on `PATH`** — every script must `source ~/Vivado/2026.1/Vivado/settings64.sh`
     first.
-  - The detected licence is an **Alveo** one; Artix-7 35T is a no-charge device in Vivado ML
-    Standard, so this should be irrelevant, but **B0 confirms it in 30 seconds** before anything is
-    built on the assumption.
+  - The detected licence is an **Alveo** one. This was assumed irrelevant on the grounds that
+    Artix-7 35T is a no-charge device; **that assumption was wrong and cost the whole M1 gate**.
+    Vivado 2026.1 gates devices by licence tier, and the tier it reports is the one it enforces:
+    with `License_Tier:ALVEO` detected it enables Alveo devices *only*, so `get_parts` returned 0
+    for every Artix-7 part while the device files sat complete on disk. The licence also carries
+    four `License_Tier:BASIC` features (`Vivado_Basic_Package` and friends); dropping the four
+    ALVEO blocks makes Vivado report **BASIC** and enumerate 1041 parts. `~/.Xilinx/Xilinx.lic` now
+    holds the BASIC-only form, with the original at `~/.Xilinx/Xilinx_full.lic.bak`.
   - Consequence, unchanged from the earlier decision: every area and timing gate is authoritative
     rather than advisory, and **Fmax moves out of "unknowable until hardware" into a Phase B
     measurement**, settling P1 — the weakest load-bearing estimate here — before the FSM is written.
