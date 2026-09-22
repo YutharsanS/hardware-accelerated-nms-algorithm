@@ -1,0 +1,59 @@
+# The standing regression, run on every pull request.
+#
+# This is deliberately the same `make test` developers run locally, not a CI-specific
+# re-implementation: a check that can pass here and fail on a desk (or the reverse) is
+# worse than no check. Roughly 2 minutes including setup.
+#
+# It lives on the integration branch rather than on the feature branches that merge into
+# it. A pull_request run is built from the PR's merge commit, so a workflow here applies
+# to every PR targeting this branch without each branch needing its own copy.
+#
+# Synthesis is NOT run here. Area and timing need Vivado, which is a ~60 GB licensed
+# install, so those gates stay manual and their results are recorded in docs/results.md.
+# CI covers correctness only.
+
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - prototype/base
+  workflow_dispatch:
+
+# A new push to a PR makes the in-flight run obsolete, so cancel it rather than paying
+# for a result nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: make test
+    # Pinned rather than ubuntu-latest so the GHDL version cannot change under us when
+    # GitHub moves the label. 24.04 ships GHDL 4.1.0, which is what the project is
+    # developed against.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GHDL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ghdl
+          ghdl --version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --all-groups
+
+      # lint + pytest + every VHDL testbench + the toolchain smoke test. The Makefile
+      # already fails the build on any GHDL warning (--warn-error), so a new warning
+      # stops CI as well.
+      - name: Run the standing regression
+        run: make test
