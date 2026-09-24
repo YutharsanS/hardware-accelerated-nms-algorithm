@@ -1011,3 +1011,58 @@ not.
 
 The critical path is `cnt` → `row_src`, the `index_table` read. In the integrated design that
 path continues into the row-source mux and lane stage 1, which is the C4 risk recorded in M2.
+
+---
+
+### C2 — `box_store`, the payload and area registers                   2026-09-24
+
+`src/components/box_store.vhd`: 32 × 64 b records and 32 × 24 b areas, all in registers, with
+three read sides:
+
+- the 21-bit sort keys (`score & not index`) for `bitonic32`;
+- the row-source record and area, selected by `row_src`;
+- the P lane candidates, lane `j` reading slot `j + col_grp·P`.
+
+The areas are computed on write by one shared multiplier (clamp, then multiply) and land one
+edge after their record. `settled` is low while an area is in flight.
+
+**Vector set:** `models/nms/vectors.py` now also writes `<case>.areas`, the model's clamped area
+per slot. `test_vectors` checks it against `model.box_area` and against the committed copy. The
+testbench reads it rather than computing areas, so it cannot share a clamp mistake with the RTL.
+
+**`tb_box_store`** writes every case back to back (so each case overwrites the last), in a
+scrambled slot order (stride 7). Even cases write on consecutive cycles and odd cases with idle
+gaps. It pins the area latency from both sides and checks every key, every `row_src` and every
+column group. It passes at P = 16, 1 and 32, with the latency pinned in 18 of 20 cases.
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| width clamp removed | killed — `degenerate`: "row_src 4 area 242760, model says 0" |
+| area written to the undelayed `waddr` | killed — back-to-back writes land in the wrong slot |
+| sort key index not inverted | killed — "key 0 = 960000, model says 960031" |
+| candidate striping `j·G + g` instead of `j + g·P` | killed — **at P = 16 only** |
+| `settled` ignores the pipeline | killed — "settled high with an area still in flight" |
+| height computed from `x` | killed — `all_survive` area mismatch |
+| width clamp uses `>=` | **survived — equivalent**: at `a = x` both give width 0 |
+
+The striping mutant is worth noting. At P = 1 and P = 32 the two formulas coincide, because
+there is only one lane or only one column group, so only the P = 16 sweep point can
+distinguish them. That is a concrete reason the sweep includes the shipped configuration and
+not just the extremes.
+
+#### Measured
+
+| LUT | FF | DSP | latches | Fmax |
+|---|---|---|---|---|
+| 1,602 (7.7%) | 2,822 | 1 | 0 | 136.0 MHz, WNS +2.645 ns |
+
+2,822 FF is exact: 2,048 payload bits, 768 area bits and 6 pipeline bits. The single DSP is the
+shared area multiplier, with both operand registers absorbed into it. The critical path is that
+DSP writing through the 32-way area decode.
+
+**The row mux answers the open C4 question.** Timed alone, `row_src` → `row_rec` is 3.951 ns.
+Added to `nms_ctrl`'s 5.714 ns and the lane's 7.161 ns stage 1, the path wired directly is
+≈ 16.8 ns. C4 therefore needs two register stages (selects, then payloads), giving
+`LANE_LATENCY = 6` and T = 80, with no change to `nms_ctrl` ([results.md](results.md) §5).

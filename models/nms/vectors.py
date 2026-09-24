@@ -9,6 +9,7 @@ separate ``.txt`` that nothing parses.
 ``<case>.hex``   32 records (16 hex) then one ``present_mask`` (8 hex)
 ``<case>.mask``  the expected ``keep_mask`` (8 hex)
 ``<case>.keys``  the 21-bit sort key per slot, in input order (6 hex)
+``<case>.areas`` the clamped 24-bit area per slot, in input order (6 hex)
 ``<case>.order`` the expected rank-to-slot table (2 hex per rank)
 ``<case>.trace`` per-rank resolve state: rank slot kept row valid keep
 ``<case>.pairs`` explicit IoU lane stimulus and expected result
@@ -165,6 +166,11 @@ def write_case(
 
     keys = [_hex(model.sort_key(b.score, i), KEY_HEX) for i, b in enumerate(case.boxes)]
     written.append(_write(outdir / f"{case.name}.keys", keys))
+
+    # Areas come from the model, not from the box_store testbench, for the reason given in
+    # _pair_row: a testbench that derived them would duplicate the clamp it is checking.
+    areas = [_hex(model.box_area(b), AREA_HEX) for b in case.boxes]
+    written.append(_write(outdir / f"{case.name}.areas", areas))
 
     order = [_hex(slot, SLOT_HEX) for slot in model.sort_order(case.boxes)]
     written.append(_write(outdir / f"{case.name}.order", order))
@@ -381,6 +387,19 @@ def read_keys(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:
         The 21-bit key for each slot, in input order.
     """
     return [int(v, 16) for v in (outdir / f"{name}.keys").read_text().split()]
+
+
+def read_areas(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:
+    """Read the per-slot area file.
+
+    Args:
+        name: Case name.
+        outdir: Directory holding the files.
+
+    Returns:
+        The clamped area of each slot, in input order.
+    """
+    return [int(v, 16) for v in (outdir / f"{name}.areas").read_text().split()]
 
 
 def read_trace(name: str, outdir: Path = DEFAULT_DIR) -> list[model.ResolveStep]:

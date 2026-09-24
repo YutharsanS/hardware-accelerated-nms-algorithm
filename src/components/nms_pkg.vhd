@@ -149,4 +149,8 @@ package nms_pkg is
     type area_array_t   is array (0 to N - 1) of area_t;
     type record_array_t is array (0 to N - 1) of record_t;
 
+    -- Unconstrained, for ports sized by a generic: box_store's P candidate outputs.
+    type record_vec_t is array (natural range <>) of record_t;
+    type area_vec_t   is array (natural range <>) of area_t;
+
 end package nms_pkg;

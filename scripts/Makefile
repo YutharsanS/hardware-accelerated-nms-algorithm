@@ -44,6 +44,7 @@ RTL = src/components/nms_pkg.vhd \
       src/components/cas.vhd \
       src/components/bitonic32.vhd \
       src/components/iou_lane.vhd \
+      src/components/box_store.vhd \
       src/components/nms_ctrl.vhd
 
 # Any RTL file not named above. Adding a module means declaring where it sits in the
@@ -71,6 +72,9 @@ SWEEP_tb_iou_lane  = -gT_INT=128 -gT_INT=255
 # The control FSM runs at the shipped point, the old sorter default, the combinational
 # sorter (the IDLE -> FILL path), and both extremes of the column-group count G = N/P.
 SWEEP_tb_nms_ctrl  = -gPIPE_CUTS=8 -gPIPE_CUTS=2 -gPIPE_CUTS=0 -gP=1 -gP=32
+
+# box_store's candidate striping depends only on P: the shipped 16 and both extremes.
+SWEEP_tb_box_store = -gP=16 -gP=1 -gP=32
 
 PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the

@@ -35,6 +35,7 @@ Reports for the last run of each module land in `build/synth/<module>/`.
 | `bitonic32` (`PIPE_CUTS = 8`) | 8,112 | 39.0% | 5,376 | 720 | 0 | 8.566 ns | 116.7 MHz *(119.2)* |
 | `iou_lane` (one lane) | 109 | 0.5% | 101 | 30 | 2 | 7.161 ns | 139.6 MHz *(170.1)* |
 | `nms_ctrl` (P = 16, C = 8) | 382 | 1.8% | 300 | 0 | 0 | 5.714 ns | 175.0 MHz |
+| `box_store` (P = 16) | 1,602 | 7.7% | 2,822 | 10 | 1 | 7.355 ns | 136.0 MHz |
 
 `iou_lane` at shipped generics (`T_INT = 128`, `K_SHIFT = 8`).
 
@@ -147,6 +148,27 @@ Every module that exists clears 100 MHz, with one configuration condition:
   is one more lane stage (`LANE_LATENCY` 5), which `nms_ctrl` absorbs through its generic,
   costing 1 cycle (T 78 → 79). See [fsm_design.md](fsm_design.md) §9.
 
+### The integrated row-source path will not close in one cycle
+
+Now that every piece exists, the path from `nms_ctrl`'s counter to lane stage 1 can be added up
+from measured segments, each timed with its ports constrained:
+
+| segment | delay |
+|---|---|
+| `nms_ctrl`: `cnt` → `index_table` read → `row_src` | 5.714 ns (clock-to-out included) |
+| `box_store`: row mux, `row_src` → `row_rec` / `row_area` | 3.951 ns |
+| `box_store`: candidate mux, `col_grp` → `cand_*` | 2.099 ns (parallel, not additive) |
+| `iou_lane`: stage 1, ports → DSP | 7.161 ns |
+| **wired directly** | **≈ 16.8 ns against 10 ns** |
+
+**So C4 needs register stages between the selects and lane stage 1.** Registering the selects
+(with `issue_valid`), then the muxed keeper and candidate payloads, gives segments of about 5.7,
+4–5 and 7.2 ns. That is `LANE_LATENCY = 6` and **T = 80 cycles (0.80 µs)**. `nms_ctrl` absorbs it
+through its generic with no logic change: its tag pipe and DRAIN are built from `LANE_LATENCY`,
+and its lane-latency consistency check verifies the result. A single stage (T = 79) would leave
+the first segment at about 9.7 ns, too marginal to plan on. C4 confirms the choice on the real
+wiring.
+
 The `PIPE_CUTS` sweep in §2 predates the method correction. Its internal-segment figures stand,
 but the table has not been re-run with ports constrained.
 
@@ -172,6 +194,7 @@ them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 ch
 
 ## 6. Not yet measured
 
-`frame_rx` / `frame_tx` and `box_store` are not written, so their rows above remain estimates.
-The FSM, row buffer and resolve are built and measured as `nms_ctrl` (§1). The integrated design has never been synthesised as a
+`frame_rx` / `frame_tx` are not written, so their rows above remain estimates. The FSM, row
+buffer and resolve are built and measured as `nms_ctrl`; the payload and area registers, the
+row-source mux and the candidate muxes are built and measured as `box_store` (§1). The integrated design has never been synthesised as a
 whole, and the per-module figures here exclude inter-block routing.

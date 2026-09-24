@@ -82,6 +82,14 @@ def test_keys_and_order_files_match_the_model(name: str, written: Path) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(vectors.all_cases()))
+def test_areas_file_matches_the_model(name: str, written: Path) -> None:
+    case = vectors.read_case(name, written)
+    areas = vectors.read_areas(name, written)
+    assert areas == [model.box_area(b) for b in case.boxes]
+    assert all(0 <= a < (1 << p.AREA_W) for a in areas)
+
+
+@pytest.mark.parametrize("name", sorted(vectors.all_cases()))
 def test_trace_file_matches_the_model(name: str, written: Path) -> None:
     case = vectors.read_case(name, written)
     _, expected = model.nms_allpairs(case.boxes, case.present_mask, trace=True)
@@ -298,7 +306,7 @@ def test_committed_vectors_are_current(written: Path) -> None:
         )
     stale = "; run: uv run python -m models.nms vectors"
     for name in sorted(vectors.all_cases()):
-        for suffix in ("hex", "mask", "keys", "order", "trace"):
+        for suffix in ("hex", "mask", "keys", "areas", "order", "trace"):
             committed = (vectors.DEFAULT_DIR / f"{name}.{suffix}").read_text()
             fresh = (written / f"{name}.{suffix}").read_text()
             assert committed == fresh, f"{name}.{suffix} is stale{stale}"

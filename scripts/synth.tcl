@@ -34,6 +34,7 @@ set rtl {
     src/components/cas.vhd
     src/components/bitonic32.vhd
     src/components/iou_lane.vhd
+    src/components/box_store.vhd
     src/components/nms_ctrl.vhd
 }
 

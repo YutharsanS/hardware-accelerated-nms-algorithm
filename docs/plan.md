@@ -37,10 +37,11 @@ This matches [architecture.md §11](architecture.md).
 
 ### Where the work stands
 
-A, B, C1 and C3 are done. The spec is frozen, the golden model and vectors exist, and `cas`,
-`bitonic32`, `iou_lane` and `nms_ctrl` (designed in [fsm_design.md](fsm_design.md)) are verified
-and measured ([results.md](results.md)). Next come C2 `box_store` and C4 integration, where the
-row-source mux timing has to be confirmed. See the Part 3 roadmap.
+A, B, C1, C2 and C3 are done. The spec is frozen, the golden model and vectors exist, and
+`cas`, `bitonic32`, `iou_lane`, `box_store` and `nms_ctrl` (designed in
+[fsm_design.md](fsm_design.md)) are verified and measured ([results.md](results.md)). Next is
+C4 integration. The measured segments show the row-source path needs two register stages, which
+makes T = 80 cycles rather than 78 ([results.md](results.md) §5). See the Part 3 roadmap.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
 `get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,
