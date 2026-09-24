@@ -62,7 +62,7 @@ first.** The host uses `int.from_bytes(b, "big")` in both directions.
 | host → FPGA | 2..257 | 32 records, 8 B each. Slot *i* is the *i*-th record. |
 | host → FPGA | 258..261 | `present_mask`, 4 B |
 | host → FPGA | 262 | `seq`, 1 B frame counter, wraps at 256 |
-| host → FPGA | 263 | `crc8` over bytes 2..262 |
+| host → FPGA | 263 | `crc8` over bytes 2..262 (CRC-8/SMBUS, defined below) |
 | FPGA → host | 0 | `status`: `0x00` OK, `0x01` CRC fail, `0x02` busy, `0x03` internal error |
 | FPGA → host | 1 | `seq`, echoed |
 | FPGA → host | 2..5 | `keep_mask`, 4 B (zero when `status ≠ 0`) |
@@ -76,10 +76,16 @@ bug. The magic word gives resynchronisation, the CRC rejects corrupt frames befo
 datapath, `seq` prevents a late reply being mis-attributed after a timeout, and an idle timeout (no
 byte for more than two byte-times mid-frame) returns the receiver to hunting.
 
+**`crc8`** — CRC-8/SMBUS: polynomial `0x07` (x⁸ + x² + x + 1), initial value `0x00`, processed
+MSB first with no input or output reflection, and no final XOR. The check value over the ASCII
+bytes `123456789` is **`0xF4`**. The reference implementation is `models/nms/params.py::crc8`,
+and it is unit-tested against that value.
+
 **`present_mask`** — bit *i* means slot *i* holds a real detection. Its only use is as the load
 value of `valid_mask` at start-of-batch instead of all-ones, so an absent slot is never a keeper
 and never dispatched; since `keep_mask` resets to zero its output bit is provably zero.
-`present_mask = 0` is well defined: terminate immediately with `keep_mask = 0`. All 32 record slots
+`present_mask = 0` is well defined: the batch runs its usual fixed T cycles and yields
+`keep_mask = 0`. There is no early exit, which would make latency depend on the data (§9). All 32 record slots
 are always transmitted regardless — only the mask says which are meaningful — which keeps the frame
 fixed-length.
 
@@ -127,9 +133,11 @@ $$\text{I} \times 2^{8} \ \ge\ \text{T\_INT} \times \text{U}$$
 Division is never performed. `>=`, not `>`. The golden model evaluates the identical integer
 expression, so agreement with the RTL is bit-exact by construction rather than by tolerance.
 
-With `T_INT = 128` this reduces to `2·I ≥ U` — two shifts and a compare, costing **zero DSPs** for
-that half. It is still written as a multiply so a different threshold works; synthesis folds the
-constant.
+With `T_INT = 128` this reduces to `2·I ≥ U` — two shifts and a compare. It is written as a
+multiply so a different threshold works. **Synthesis was expected to fold the constant and did
+not:** Vivado maps `T_INT × U` to a second DSP, so a lane costs **2 DSPs, not 1** (measured,
+[results.md](results.md) §3). Recovering the fold is open; it would halve the DSP budget but
+changes nothing else.
 
 ---
 
@@ -191,7 +199,7 @@ and it also removes a divide-by-zero that a float formulation would hit.
 |---|---|
 | `frame_rx` / `frame_tx` | magic hunt, CRC-8, `seq`, idle timeout, byte↔record packing |
 | `box_store` | 32×64 b payloads + 32×24 b areas, areas computed during `LOAD` |
-| `bitonic32` | 240 CAS on 21-bit keys, `PIPE_CUTS = 2` → 3 cycles. Output ascending, so the rank table reads reversed: `index_table(r) = idx(out(31−r))` |
+| `bitonic32` | 240 CAS on 21-bit keys, `PIPE_CUTS = 8` → 8 cycles, the lowest setting that meets 100 MHz (119.2 MHz; 2 cuts reach only 53.9 MHz, [results.md](results.md) §2). Output ascending, so the rank table reads reversed: `index_table(r) = idx(out(31−r))` |
 | `iou_lane` × P | `P = 16` default, `P ∈ {1,2,4,8,16,32}`. Lane *j* owns columns j, j+P, …, so it muxes 32/P payloads rather than a 32:1 crossbar |
 | row buffer | 2 rows of `S` plus `idx_r`, streaming |
 | resolve | one rank per cycle, trailing the fill by `L` |
@@ -199,17 +207,27 @@ and it also removes a divide-by-zero that a float formulation would hit.
 **Lane pipeline, L = 4:** (1) min/max, subtract, clamp; (2) `I = w·h` (DSP); (3) `U`, `RHS`, `LHS`;
 (4) 33-bit compare → `suppress`.
 
-**FSM:** `IDLE → LOAD → SORT(3) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L) → DONE`.
+**Issue registers, I = 2.** In `nms_core`, two register stages sit between the FSM's issue and
+lane stage 1: one after the row/column selects, one after the payload muxes. Wired directly,
+that path (`index_table` read → 32:1 × 72 b row mux → lane stage 1) measures 14.9 ns in the
+placed core, 67 MHz. With I = 2 the core closes 100 MHz ([results.md](results.md) §5). To the
+FSM these are simply more lane stages.
+
+**FSM:** `IDLE → LOAD → SORT(C) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L+1) → DONE`, with
+`LOAD` owned by `frame_rx`. The cycle-level design, including why SORT costs `C + 1` (the
+`index_table` register), is in [fsm_design.md](fsm_design.md).
 
 **Latency is an equality, not a bound:**
 
 ```
-T = N²/P + L + C + 2
+T = N²/P + L + I + C + 2
 ```
 
-At P = 16 that is **72 cycles = 0.72 µs** on the 100 MHz clock. There is no data-dependent term, so
-worst case = best case for every possible input. That is the "deterministic execution" property, and
-it is the claim that actually holds.
+At P = 16, L = 4, I = 2 and C = 8 that is **80 cycles = 0.80 µs** on the 100 MHz clock.
+(Earlier revisions said 72 cycles, which assumed `PIPE_CUTS = 2` and no issue registers.
+Neither meets 100 MHz; see [results.md](results.md) §5.) There is no
+data-dependent term, so worst case = best case for every possible input. That is the
+"deterministic execution" property, and it is the claim that actually holds.
 
 **Area budget at P = 16** (estimates; measured figures are in [results.md](results.md), which
 supersedes this table wherever a block has actually been built):
@@ -223,6 +241,11 @@ supersedes this table wherever a block has actually been built):
 | payload + area + row + index registers | — | 3,050 | 1 |
 | masks, resolve, FSM, UART | ~900 | ~450 | 0 |
 | **total** | **≈12,320 (59%)** | **≈7,240 (17%)** | **17 (19%)** |
+
+> **Two estimates here have been overtaken by measurement** ([results.md](results.md) §4). At the
+> `PIPE_CUTS = 8` that timing requires, the sorter is 8,112 LUT and 5,376 FF. The lanes take
+> **2 DSPs each** (§5), so the projected totals are **≈11,550 LUT (55.5%), ≈10,490 FF (25.2%) and
+> 33 DSP (36.7%)**. The design still fits with margin.
 
 ---
 
@@ -247,11 +270,11 @@ supersedes this table wherever a block has actually been built):
 ## 11. Scope limits, stated rather than left unmentioned
 
 * **Single class.** Real NMS runs per class; this record carries no class ID. A 4-bit class carved
-  from the score would give 16 classes and re-run the FSM per class in 16 × 0.72 µs = 12 µs, still
+  from the score would give 16 classes and re-run the FSM per class in 16 × 0.80 µs = 12.8 µs, still
   trivial against 2.70 ms of link time — but that is not built.
 * **N = 32 fixed.** The combinational sorter is `Θ(N log²N)`: N = 64 needs 672 CAS ≈ 20,160 LUT and
   does **not** fit this device. A folded sorter is the path past that.
-* **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.72 µs of
+* **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.80 µs of
   compute. The report must present **core latency** and determinism, not a system speedup;
   end-to-end, doing NMS on the host CPU is faster. See `docs/build_log.md` and the plan's Part 1e.
 

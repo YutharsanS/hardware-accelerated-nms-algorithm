@@ -52,9 +52,9 @@ def test_union_cannot_underflow_for_degenerate_boxes() -> None:
 
 
 def test_latency_is_data_independent_and_scales_as_expected() -> None:
-    assert p.latency_cycles(16) == 72
+    assert p.latency_cycles(16) == 80
     # halving the lanes must double only the N^2/P term, not the fixed overhead
-    fixed = p.LANE_LATENCY + p.PIPE_CUTS + 2
+    fixed = p.LANE_LATENCY + p.ISSUE_REGS + p.PIPE_CUTS + 2
     assert p.latency_cycles(8) - fixed == 2 * (p.latency_cycles(16) - fixed)
     for lanes in (1, 2, 4, 8, 16, 32):
         assert p.N % lanes == 0
@@ -98,3 +98,11 @@ def test_matches_architecture_md() -> None:
     assert re.search(r"`U = area1 \+ area2 − I`.*\|\s*25\s*\|", text)
     assert re.search(r"`LHS = I << 8`.*\|\s*32\s*\|", text)
     assert re.search(r"`RHS = T_INT · U`.*\|\s*33\s*\|", text)
+
+
+def test_crc8_matches_the_published_check_value_and_detects_a_flip() -> None:
+    assert p.crc8(b"123456789") == 0xF4
+    assert p.crc8(b"") == p.CRC8_INIT
+    frame = bytes(i % 256 for i in range(261))  # bytes 2..262 of a frame
+    flipped = bytes([frame[0] ^ 0x01]) + frame[1:]
+    assert p.crc8(frame) != p.crc8(flipped)

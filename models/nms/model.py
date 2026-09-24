@@ -315,12 +315,21 @@ def nms_allpairs(
     ]
 
     steps: list[ResolveStep] = []
+    resolved = 0
     for rank, slot in enumerate(order):
+        # The invariant that removes the keeper barrier (plan.md P10): no slot of an earlier
+        # rank is still valid, so applying the whole row -- earlier ranks included -- can
+        # only clear bits that are already clear. Checked, not assumed, so an edit to the
+        # resolve step cannot break it silently.
+        assert valid & resolved == 0, (
+            f"rank {rank}: earlier-rank slots {valid & resolved:#x} are still valid"
+        )
         kept = bool((valid >> slot) & 1)
         if kept:
             keep |= 1 << slot
             valid &= ~rows[rank]
         valid &= ~(1 << slot)
+        resolved |= 1 << slot
         if trace:
             steps.append(
                 ResolveStep(

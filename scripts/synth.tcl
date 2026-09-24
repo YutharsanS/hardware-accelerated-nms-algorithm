@@ -34,6 +34,9 @@ set rtl {
     src/components/cas.vhd
     src/components/bitonic32.vhd
     src/components/iou_lane.vhd
+    src/components/box_store.vhd
+    src/components/nms_ctrl.vhd
+    src/pipeline/nms_core.vhd
 }
 
 create_project -in_memory -part $part
@@ -56,6 +59,20 @@ synth_design {*}$synth_args
 set clk_ports [get_ports -quiet clk]
 if {[llength $clk_ports] > 0} {
     create_clock -name clk -period $period $clk_ports
+    # Port paths must be constrained too, or they are silently left out of the WNS below.
+    # With only create_clock, input-port -> register and register -> output-port paths are
+    # "unconstrained" -- which excluded iou_lane's entire stage 1 and bitonic32's first and
+    # last segments from every figure taken before this line existed. A zero delay against
+    # clk models each neighbour as a register at the boundary: the port path gets the full
+    # period, as it would when the module sits between registers in the integrated design.
+    set data_in [get_ports -quiet -filter {DIRECTION == IN && NAME != clk}]
+    if {[llength $data_in] > 0} {
+        set_input_delay 0 -clock clk $data_in
+    }
+    set data_out [get_ports -quiet -filter {DIRECTION == OUT}]
+    if {[llength $data_out] > 0} {
+        set_output_delay 0 -clock clk $data_out
+    }
 } else {
     set_max_delay $period -from [all_inputs] -to [all_outputs]
 }

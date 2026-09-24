@@ -1,134 +1,92 @@
-# Bitonic sorting network for 3D Gaussian Splatting — exploration plan
+# NMS accelerator with a bitonic sorting network — plan
 
-## Why this plan changed
+## Direction — decided 2026-09-24: the project is the NMS accelerator
 
-The project was scoped as an NMS accelerator. Fully specifying it — and then measuring rather than
-assuming — showed the premise does not hold:
+An earlier revision of this plan proposed pivoting to a 3D Gaussian Splatting depth sorter and put
+the NMS design on hold. The Part 0 exploration was run ([phase0_findings.md](phase0_findings.md))
+and **the team decided to stay with NMS.** Everything from "The NMS design" onward is the live plan.
+The 3DGS results go into the report as **future work**. The sorter half of this design — `cas`,
+`bitonic32`, `PIPE_CUTS`, tie-breaking by index, the verification discipline — carries over to a
+depth sorter unchanged, with `(depth, index)` keys, as the block-sort primitive inside a streaming
+merge sorter.
 
-- **There is no bottleneck to remove.** At N=32 a CPU does NMS in **47 µs = 0.14% of a 33 ms frame**
-  (measured on this machine, i5-13500H).
-- **The accelerator makes the system slower.** Behind the UART: 868 µs versus the CPU's 83 µs — a
-  **10× regression**. Transfer is O(N) at 20 µs/box while CPU compute is O(N²) at 0.067 µs/pair, so
-  no baud rate fixes it; the crossover is N ≈ 600, well past what the board holds.
-- **It does not even win on energy.** At a 0.003% duty cycle the XC7A35T's static power (~7–16 mJ
-  per frame) dwarfs the ~0.5 mJ the CPU spends on the NMS.
+### The scope statement the report must carry
 
-Meanwhile this repository is named `bitonic-sorting-network-**3dgs**`, and in 3D Gaussian Splatting
-the sort genuinely dominates: [GSCore (ASPLOS 2024)](https://dl.acm.org/doi/10.1145/3620666.3651385)
-measures the sorting stage at **up to 90.8% of GPU bandwidth** and builds its Sorting Unit on **a
-bitonic network**; [REACT3D](https://dl.acm.org/doi/10.1145/3725843.3756109) and
-[STREAMINGGS](https://arxiv.org/pdf/2506.09070) do the same. And a **full sort is architecturally
-required** there — alpha blending must proceed front-to-back — so the sorter-versus-argmax tension
-that undermined the NMS design disappears.
+The measurements that prompted the pivot question are not dropped. Corrected to the 1 Mbaud design
+point, they bound what the project can honestly claim:
 
-**So: Part 0 gathers this project's own 3DGS data before committing.** The Appendix keeps the NMS
-design intact — its sorter half transfers unchanged, and its measurements are the evidence for
-pivoting.
+- **There is no system-level bottleneck at N = 32.** A vectorised CPU implementation does the NMS
+  in **36–57 µs** (numpy all-pairs, measured across four cases, Part 1e), about 0.1–0.2% of a
+  33 ms frame.
+- **End to end, the host is faster.** Behind the UART the round trip is **2.70 ms** (264 B in +
+  6 B out at 1 Mbaud) against **0.80 µs** of compute. Transfer is O(N) at 80 µs per box
+  (8 B × 10 bits); CPU compute is O(N²) at ~0.07 µs per pair. The crossover is around N ≈ 2,400,
+  far past the N = 32 wall (P2).
+- **Energy does not rescue it** — an estimate, not a measurement: at a ~0.002% duty cycle the
+  device's static power per frame exceeds the energy the CPU spends on the NMS.
 
-| § | What it settles |
-|---|---|
-| **Part 0** | **3DGS exploration — the live work. Seven Python files, 2–3 days, no RTL.** |
-| Appendix | The complete NMS design: frozen spec, all-pairs architecture, 11 pitfalls, 8 loopholes, and the critical evaluation record. Reusable and retained as evidence. |
+So the claims are **core latency and determinism**: 80 cycles, identical for every input,
+45–71× faster than vectorised Python (measured) and ~40× faster than a Cortex-M7 (estimate),
+Part 1e.
+This matches [architecture.md §11](architecture.md).
 
-**Start here — three steps, in order.**
+> **Correction to an earlier revision**, whose version of these bullets read "868 µs versus the
+> CPU's 83 µs — a 10× regression … 20 µs/box … crossover N ≈ 600". Those are 3 Mbaud transport
+> figures set against a single-batch CPU timing that Part 1e itself withdrew. At the chosen
+> 1 Mbaud the gap is larger, not smaller.
 
-1. **0.1–0.3**: load a pretrained 3DGS `.ply`, reimplement the projection and tile assignment in
-   numpy, then *validate it by rendering an image*. Everything downstream is worthless if the
-   projection is subtly wrong.
-2. **0.4 and 0.6**: the per-tile histogram and the early-termination analysis. Between them they
-   choose `N` and decide whether a full sort is even the right primitive.
-3. **Decide the pivot** from the table at the end of Part 0. If it goes ahead, the Appendix's sorter
-   work (`cas`, `bitonic32`, `PIPE_CUTS`, folded fallback, the Vivado gate strategy, the VHDL-93
-   language policy) is reused with `(depth, index)` keys.
+### Where the work stands
+
+A, B and C1–C4 are done. The spec is frozen, the golden model and vectors exist, and every
+compute block is verified and measured ([results.md](results.md)). They are integrated as
+`nms_core` (`box_store` + `bitonic32` + `nms_ctrl` + 16 lanes + 2 issue registers), which is:
+- bit-exact on 1,020 batches under both GHDL and xsim, with T = 80 checked as an equality on
+  every batch;
+- 59.5% LUT, 33 DSP and 100 MHz with +0.202 ns of slack, when placed and routed.
+
+Next is D1: UART, `frame_rx` / `frame_tx`, and the board top. The thin timing margin is the risk
+to watch there (results.md §5). See the Part 3 roadmap.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
-`get_parts xc7a35tcpg236-1` returns 1 — every synthesis gate in either direction depends on it. It
-returns 1 as of M1's resolution; if it ever returns 0 again, suspect the licence tier before the
-install (see the licence bullet in Part 0).
+`get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,
+suspect the licence tier before the install (see A0).
 
-## Part 0 — 3DGS exploration: gather the data, then decide the pivot
+## Part 0 — 3DGS exploration (completed; future work)
 
-> **The project direction is under review.** Measurement showed the NMS framing accelerates a
-> non-bottleneck: at N=32 a CPU does NMS in **47 µs = 0.14% of a 33 ms frame**, and behind the UART
-> the accelerated system is **10× slower** than not accelerating at all. Meanwhile the repository is
-> named `bitonic-sorting-network-**3dgs**`, and in 3D Gaussian Splatting the sort *is* the
-> bottleneck — [GSCore (ASPLOS 2024)](https://dl.acm.org/doi/10.1145/3620666.3651385) measures the
-> sorting stage at **up to 90.8% of GPU bandwidth**, builds its Sorting Unit on **a bitonic network**,
-> and [REACT3D](https://dl.acm.org/doi/10.1145/3725843.3756109) and
-> [STREAMINGGS](https://arxiv.org/pdf/2506.09070) do the same.
->
-> **Parts 1–6 below stay intact and on hold.** Everything in them about the sorter — `cas`,
-> `bitonic32`, `PIPE_CUTS`, the folded fallback, the sort-keys-not-payloads insight, tie-breaking by
-> index, the Yosys→Vivado gate strategy, the bit-exact verification discipline — transfers unchanged
-> to a 3DGS depth sorter. Only the key changes, from `(score, index)` to `(depth, index)`, and only
-> the IoU/NMS datapath would be dropped.
+Run on the Tanks & Temples `train` scene; full results in [phase0_findings.md](phase0_findings.md).
+In short:
 
-### Why data first
+- the 3DGS sort is a genuine bottleneck (CPU 504–662 ms against a 33 ms budget);
+- a full sort is required (early termination saves nothing);
+- the N = 32 network is 49× too small to be the whole sorter, but it is the right block-sort
+  primitive;
+- a per-tile sorter fits a Basys 3.
 
-The papers give the *shape* of the problem, not this project's numbers. Two findings in particular
-must be measured before choosing an architecture:
-
-- The reference renderer assigns each splat-tile instance a **64-bit key — low 32 bits depth, high
-  bits tile index** — over **16×16 pixel tiles**, and resolves all ordering in **one CUB radix sort**
-  (2.5–4.2 ms per frame at 4K). Per-tile *hierarchical* sorting is GSCore's key optimisation, and a
-  tile holds on the order of 10²–10³ Gaussians — the size a Basys 3 can actually own.
-- The literature reports Gaussians-per-tile varying by **two orders of magnitude**, which makes
-  *fixed-parallelism* sorting modules idle on small tiles and bottleneck on large ones. **A bitonic
-  network is exactly a fixed-parallelism sorter.** That tension is the project's real research
-  question, and answering it needs the actual histogram.
-
-**Hardware constraint:** this machine has **no NVIDIA GPU** (Intel Iris Xe only), so the CUDA
-reference rasterizer cannot be run. The exploration therefore reimplements the rasterizer's
-*preprocess* stage in numpy — which is the right tool anyway, since that code doubles as the golden
-model for the eventual RTL.
-
-### Phase 0 deliverables
-
-| # | File | Action |
-|---|---|---|
-| 0.1 | `models/gs/load_ply.py` | Parse a pretrained 3DGS `.ply` with numpy — binary little-endian, properties `x,y,z`, `opacity`, `scale_0..2`, `rot_0..3` (skip `f_dc_*`/`f_rest_*`; only geometry and opacity are needed). Read the ASCII header, then one structured-dtype `fromfile`. No `torch`, no `plyfile` dependency required. |
-| 0.2 | `models/gs/project.py` | Reimplement the reference preprocess: world→camera transform, frustum cull, perspective-project the means, build the 3D covariance from scale + rotation quaternion, project to 2D covariance through the projection Jacobian (EWA splatting), take the 3σ screen-space radius, and emit `(tile_id, depth, gaussian_index)` instances over a 16×16 tile grid. |
-| 0.3 | `models/gs/validate.py` | **Correctness gate — the histogram is worthless if the projection is wrong.** Two checks: (a) mean tiles-touched per Gaussian should land in the published ~5–20 range; (b) render a low-resolution image (e.g. 400×300) by actually alpha-blending the sorted per-tile lists, and compare against the scene's reference view. If the image looks like the scene, the projection and tile assignment are right. |
-| 0.4 | `models/gs/tile_stats.py` | **The headline artifact.** Histogram of instances per tile, across several camera poses. Plus a **coverage table**: for N ∈ {32, 64, 128, 256, 512, 1024}, what fraction of *tiles* fit in N, and what fraction of *instances* those tiles hold. This is what picks N. |
-| 0.5 | `models/gs/sort_cost.py` | Measured CPU baseline on this machine: per-tile `argsort` summed over tiles, versus one global `lexsort` on the composite 64-bit key. Sanity-check the global figure against the published 2.5–4.2 ms @4K. |
-| 0.6 | `models/gs/early_term.py` | **The partial-sort question.** Walk each tile front-to-back accumulating transmittance `T *= (1-α)` and record how many Gaussians are consumed before `T < 1e-4` (the reference threshold). If tiles typically saturate after a small fraction of their list, **a full sort is wasteful and a top-K/partial sorter is the better architecture** — which would change the RTL substantially. |
-| 0.7 | `models/gs/key_width.py` | Feeds the area model directly: how much depth precision is needed before ordering artifacts appear (reference uses 32-bit float — can 16-bit fixed do?), plus index width = `ceil(log2(max instances))`. Total key width sets the CAS width, which sets LUT cost via the existing `8 + 2·⌈W/2⌉` model. |
-
-**Inputs needed:** one pretrained 3DGS scene `.ply` (a Tanks & Temples scene such as `truck` is ~1M
-Gaussians / ~250 MB; Mip-NeRF 360 scenes are larger). 27 GB free is ample. Camera poses come from
-the scene's `cameras.json` if shipped, otherwise construct a view looking at the point-cloud
-centroid.
-
-### The decision Phase 0 produces
-
-| question | answered by | feeds |
-|---|---|---|
-| What `N` should the sorting network target? | 0.4 coverage table | sorter size, area budget |
-| Pad-to-`N`, bucket by size, or hybrid? | 0.4 histogram variance | architecture choice |
-| Full sort, or top-K / partial? | 0.6 early-termination | whether the bitonic network is even the right primitive |
-| Key width, hence CAS width and LUT cost | 0.7 | the Part 1 area model, reused verbatim |
-| Is the FPGA competitive at all? | 0.5 vs the cycle model | go / no-go on the whole pivot |
-
-**Cost: 2–3 days**, all Python, no RTL, no hardware. It either justifies the pivot with this
-project's own numbers or kills it cheaply — and 0.2 becomes the golden model either way.
+The original Part 0 plan is in git history (`git show cbd923c:docs/plan.md`). It is out of scope
+for this project.
 
 ---
 
----
-
-# Appendix — the NMS design, complete and on hold
+# The NMS design
 
 Everything below specifies the NMS accelerator in full: 24 answered questions, a frozen wire format
 and datapath, an all-pairs architecture verified equivalent over 20,000 batches, and a critical
-evaluation record. It is retained for two reasons.
+evaluation record.
 
-**It is reusable.** The sorter half — `cas`, `bitonic32`, the `PIPE_CUTS` study, the folded fallback,
-sort-keys-not-payloads, tie-breaking by index, the Yosys→Vivado gate strategy, the VHDL-93 language
-policy and the bit-exact verification discipline — transfers to a 3DGS depth sorter unchanged. Only
-the key changes, from `(score, index)` to `(depth, index)`; only the IoU datapath is dropped.
+### Corrections after measurement (2026-09-24)
 
-**It is the evidence for the pivot.** The measurements that killed the NMS framing are in Part 1e
-and Part 6, and a report needs them stated rather than quietly dropped.
+Measurement at B5 and C1 overturned several figures below. Each is corrected where it appears,
+and Part 6 records it:
+
+| was | measured / decided | consequence |
+|---|---|---|
+| `PIPE_CUTS = 2` closes 100 MHz, 3-cycle sort | 53.9 MHz. **`PIPE_CUTS = 8`** is the lowest setting that meets it (119.2 MHz) | **T = 78 cycles = 0.78 µs at P = 16**, not 72. Every speedup ratio is about 8% smaller |
+| 1 DSP per lane, 17 total | **2 per lane** — `T_INT × U` did not fold into shifts | **33 DSP (36.7%)**; 65 at P = 32. Still fits |
+| sorter 7,200 LUT / 1,344 FF | **8,112 LUT / 5,376 FF** at 8 cuts | projected total ≈ 11,550 LUT (55.5%), ≈ 10,490 FF (25.2%) |
+| CRC-8 unspecified | **CRC-8/SMBUS** (poly `0x07`, init `0x00`, check `0xF4`) | [architecture.md §3](architecture.md), `params.crc8` |
+| `present_mask = 0` → "terminate immediately" | full fixed walk, `keep_mask = 0` | latency stays data-independent |
+| row-source path assumed to fit one cycle | 14.9 ns in the placed core (67 MHz) | **`ISSUE_REGS = 2`** register stages; **T = N²/P + L + I + C + 2 = 80 cycles = 0.80 µs** — this row supersedes the 78 in the first |
+| cycle-count watchdog | consistency checks ([fsm_design.md §7](fsm_design.md)) | a real control bug is caught, not a broken counter re-measured |
 
 ## A0 — What was wrong in the original NMS plan
 
@@ -188,6 +146,12 @@ consequence of Q1. Ship a **combinational network with 2 internal register cuts*
 pipelined, so the report's comparison table falls out of one source file. Proposal §2's "fully
 pipelined" must be deleted.
 
+> **Measured at B5 — the timing half of this answer was wrong.** Two cuts reach only **53.9 MHz**
+> (18.570 ns). The lowest swept setting that meets 100 MHz is **`PIPE_CUTS = 8`: an 8-cycle sort,
+> 119.2 MHz, 5,376 FF (12.9%)**, and it is also *cheaper* in LUTs than 2 cuts (8,112 against
+> 9,596), because shorter chains let the tool share logic rather than replicate it
+> ([results.md](results.md) §2). The generic did its job: the fix was one constant.
+
 **Q3. Is 10k FF (24%) for full pipelining acceptable?** Affordable but **pointless**: 15×32×21 =
 10,080 FF buys one sorted batch per cycle, and a batch arrives every 2.70 ms (Part 1b). Rejected in
 favour of the 1,344 FF two-cut version — **7.5× fewer FFs for throughput nothing can consume.**
@@ -213,7 +177,10 @@ Full derivation in Part 1a; the build decision is deferred to after C4.
 cycles. Only `w×h` is genuinely per-pair (1 DSP, 12×12). `T_INT×U` is **0 DSP**, because the
 threshold is a fixed synthesis-time generic (decided) and `T_INT=128` collapses the
 predicate to `2I ≥ U` — two shifts and a compare. So a lane is **1 DSP, not 3** → `P + 1` total, and
-**P=32 costs 33 of 90 DSPs.** plan.md's "97 DSPs, does not fit" is wrong by 3×. **DSPs are not the binding constraint; LUTs and payload fan-out
+**P=32 costs 33 of 90 DSPs.** plan.md's "97 DSPs, does not fit" is wrong by 3×.
+*(Measured at C1: the `T_INT×U` fold did not happen, so a lane is **2 DSPs** — 33 at P=16, 65 at
+P=32. The per-box-area half of the argument held; the fold half did not. See the correction below
+Part 2's area budget.)* **DSPs are not the binding constraint; LUTs and payload fan-out
 are.** Worst-case cycles for the **keeper-serial** structure this question assumed
 (`32 areas + 3 sort + 32·(32/P + L + 1) + ≤32 scan`, L=4):
 
@@ -222,10 +189,10 @@ are.** Worst-case cycles for the **keeper-serial** structure this question assum
 | cycles | 1251 | 739 | 483 | 355 | 291 | 259 |
 | µs @100 MHz | 12.51 | 7.39 | 4.83 | 3.55 | 2.91 | 2.59 |
 
-**Superseded by Part 1e** — the adopted all-pairs structure gives **72 cycles / 0.72 µs at the
-chosen P=16**, 4.0× better, because it stops paying the pipeline drain once per keeper. `P` remains a
-generic so the sweep is a measured scaling curve. The DSP conclusion above is unaffected: a lane is
-1 DSP either way, and **P=17 DSPs at P=16.**
+**Superseded by Part 1e** — the adopted all-pairs structure gives **80 cycles / 0.80 µs at the
+chosen P=16** (with the `PIPE_CUTS = 8` and 2 issue registers that timing requires), 3.7× better, because it stops paying
+the pipeline drain once per keeper. `P` remains a generic so the sweep is a measured scaling curve.
+The DSP cost per lane is the same in either structure: **2 as measured**, so 33 DSPs at P=16.
 
 ### §2 Data format
 
@@ -279,7 +246,7 @@ frees the field. Floats never enter the vector files. Order-preserving for 2-dec
 (decided). The record gains no class ID and the 64-bit layout stands. The report must say
 this outright — real NMS runs per class, and leaving the omission unmentioned is what plan.md §2
 warns against. Note the escape hatch for anyone extending it: 4 bits carved from the score gives 16
-classes, and the FSM re-runs per class in 16 × 0.72 µs = 12 µs, still trivial against 2.70 ms of
+classes, and the FSM re-runs per class in 16 × 0.80 µs = 12.8 µs, still trivial against 2.70 ms of
 link time.
 
 ### §3 The two likely bugs
@@ -375,16 +342,17 @@ the masking overhead is included. The sorter costs an order of magnitude more ar
 |---|---|---|
 | Structure depth | `Θ(log²N)` = 15 CAS levels | `Θ(log N)` = 5 levels |
 | Evaluated | once per batch | once per keeper |
-| Sort/select cycles | `C+1` = 3, once | 1 per keeper, `K` total |
+| Sort/select cycles | `C+1` = 9, once (C = 8) | 1 per keeper, `K` total |
 | Keeper selection | 32:1 index mux + monotone scan, ≤`N` cycles amortised | folded into the same cycle |
 | Suppression | `K·(⌈N/P⌉ + L + 1)` | `K·(⌈N/P⌉ + L + 1)` |
 | **Total** | `Θ(N²/P + N·L)` | `Θ(N²/P + N·L)` |
-| **N=32, P=8** | **355 cycles** | **352 cycles** |
+| **N=32, P=8** | **361 cycles** | **352 cycles** |
 
 **The two are asymptotically identical in time**, because both are dominated by the `Θ(N²/P)`
 pairwise IoU work that neither structure touches. The sort's `Θ(log²N)` depth is a one-time additive
 term; the tree's `Θ(log N)` depth is per-iteration but fits inside the single cycle the FSM already
-spends selecting a keeper. Concretely the difference is **3 cycles — 0.85%**.
+spends selecting a keeper. Concretely the difference is **9 cycles — 2.5%** at the `C = 8` timing requires (3 cycles,
+0.85%, at the untimed `C = 2`).
 
 **Critical path** favours the tree too: the unpipelined sorter is 15 levels (≈22–37 ns → 27–45 MHz,
 which is why it needs the 2 cuts of Q2), while the tree is 5 levels (≈7–12 ns) and closes 100 MHz
@@ -399,7 +367,7 @@ which is why it needs the 2 cuts of Q2), while the tree is 5 levels (≈7–12 n
 > alternative, found it 10.3× cheaper, and then found the faster architecture requires the sort
 > anyway" is a stronger result than either half alone.
 
-**10.3× the area, 1,504 extra flip-flops, and 0.85% of the time back.** In the keeper-serial design
+**10.3× the area, 5,536 extra flip-flops (8 cuts + rank table), and 2.5% of the time back.** In the keeper-serial design
 the sorter is not justifiable on performance grounds, and the report must say so rather than imply a
 speedup. Its justifications there, both legitimate:
 
@@ -429,12 +397,12 @@ suppression writes retire. Half the latency is pipeline refill, not work.
 Benchmarked on the dev machine (**13th Gen Intel i5-13500H, 16 cores**), 32 boxes, 2,000 iterations,
 12-bit coords and 16-bit scores as specified:
 
-| implementation | measured | vs accelerator @P=16 (0.72 µs) |
+| implementation | measured | vs accelerator @P=16 (0.80 µs) |
 |---|---|---|
-| notebook float NMS, as written | 37–446 µs | 52–619× faster |
-| planned integer NMS (same predicate as the RTL) | 45–477 µs | 62–662× faster |
-| numpy all-pairs, vectorised — fair Python upper bound | **36–57 µs** | **50–79× faster** |
-| integer all-pairs (what the RTL implements) | 852–948 µs | 1184–1317× faster |
+| notebook float NMS, as written | 37–446 µs | 46–558× faster |
+| planned integer NMS (same predicate as the RTL) | 45–477 µs | 56–596× faster |
+| numpy all-pairs, vectorised — fair Python upper bound | **36–57 µs** | **45–71× faster** |
+| integer all-pairs (what the RTL implements) | 852–948 µs | 1065–1185× faster |
 
 **Corrected at B1.4.** The single-number figures first recorded here (583 / 474 / 83 µs) were
 measured on one random batch. Re-measured across four committed cases, the spread *between
@@ -443,7 +411,7 @@ sequential loop short-circuits as boxes get suppressed. `all_survive` is its wor
 (nothing suppressed, no short-circuit) and `all_equal` its best. Quoting one number without
 naming the batch was misleading, so the ranges above replace it.
 
-**Yes — decisively faster than the Python testbench, by 50–79× even against a properly vectorised
+**Yes — decisively faster than the Python testbench, by 45–71× even against a properly vectorised
 numpy implementation** that uses the same all-pairs structure as the proposed hardware.
 
 **The 16 cores do not help.** A bare thread-pool round trip with *zero work* measures **18.47 µs** on
@@ -454,9 +422,9 @@ asymmetry is precisely the accelerator's argument.
 
 Caveat to keep in the report so it cannot ambush you: at N=32 numpy is *interpreter-overhead*
 dominated, not compute dominated — ~30 numpy calls at 1–3 µs of overhead each. A tuned C/AVX2
-implementation is estimated below at ~0.23 µs, i.e. roughly at parity with the accelerator. The
-honest claim is **"50–660× faster than Python, ~80× faster than an embedded CPU, at parity with
-hand-tuned desktop SIMD."**
+implementation is estimated below at ~0.23 µs, about 3.5× *faster* than the accelerator. The
+honest claim is **"45–600× faster than Python (measured), ~40× faster than a Cortex-M7
+(estimate), ~3.5× slower than hand-tuned desktop SIMD (estimate)."**
 
 ### Estimated baselines for other processor classes
 
@@ -479,7 +447,7 @@ which is what motivated the restructure below.
 Replace "select keeper → dispatch its candidates → barrier" with:
 
 1. **Areas during `LOAD`** — each box's area is computable the moment its 8 bytes land. **0 cycles.**
-2. **Sort** → `index_table`, 3 cycles.
+2. **Sort** → `index_table`, `C + 1` = 9 cycles.
 3. **Suppression rows.** Walk rows **in rank order**: broadcast the rank-`r` box to all lanes, lane
    `j` statically owns column `j`, giving `⌈N/P⌉` cycles per row. The pipeline drains **once**, not
    32 times. (The 32×32 matrix is the conceptual model; physically it is a 2-row streaming buffer —
@@ -494,11 +462,15 @@ T = (C+1) + N·⌈N/P⌉ + L + 1        — fully data-independent, no K term
 
 | P | keeper-serial | restructured | speedup |
 |---|---|---|---|
-| 8 | 355 cy / 3.55 µs | 136 cy / **1.36 µs** | 2.6× |
-| **16** | 291 cy / 2.91 µs | **72 cy / 0.72 µs** | **4.0×** |
-| 32 | 259 cy / 2.59 µs | 40 cy / **0.40 µs** | 6.5× |
+| 8 | 361 cy / 3.61 µs | 144 cy / **1.44 µs** | 2.5× |
+| **16** | 297 cy / 2.97 µs | **80 cy / 0.80 µs** | **3.7×** |
+| 32 | 265 cy / 2.65 µs | 48 cy / **0.48 µs** | 5.5× |
 
-**Adopted: the restructure at P=16** (decided) — 0.72 µs, ~62% LUT, comfortable routing
+Both columns at `C = PIPE_CUTS = 8`, the setting 100 MHz requires; the restructured column also
+carries the 2 issue registers the placed core needs (`I` in `T = (C+1) + N·⌈N/P⌉ + L + I + 1`).
+An earlier revision used `C = 2`, no issue registers, and gave 72 cycles and 4.0× at P=16.
+
+**Adopted: the restructure at P=16** (decided) — 0.80 µs, 59.5% LUT (measured, whole core), comfortable routing
 margin. P=32 stays a synthesis-sweep data point; P9 flags it as where routing gets hard.
 
 The overlap is the whole trick — resolve consumes row `r` while the lanes are already computing row
@@ -506,20 +478,20 @@ The overlap is the whole trick — resolve consumes row `r` while the lanes are 
 
 ```mermaid
 gantt
-  title All-pairs schedule at P=16 - 72 cycles total
+  title All-pairs schedule at P=16, C=8, I=2 - 80 cycles total
   dateFormat X
   axisFormat %s
   section Sort
-  bitonic32 3 cycles    :0, 3
+  bitonic32 + index_table 9 cycles :0, 9
   section Row fill - 2 cy per rank
-  fill rank 0           :3, 5
-  fill rank 1           :5, 7
-  fill rank 2           :7, 9
-  fill rank 31          :65, 67
-  section Resolve - trails fill by L=4
-  resolve rank 0        :8, 9
-  resolve rank 1        :10, 11
-  resolve rank 31       :70, 72
+  fill rank 0           :9, 11
+  fill rank 1           :11, 13
+  fill rank 2           :13, 15
+  fill rank 31          :71, 73
+  section Resolve - trails fill by L+I+1
+  resolve rank 0        :16, 17
+  resolve rank 1        :18, 19
+  resolve rank 31       :78, 80
 ```
 
 Contrast the keeper-serial design, where every keeper paid its own 4-cycle drain: 32 × L = 128 of
@@ -527,8 +499,8 @@ its 259 cycles were pipeline refill.
 
 Cost: ~74 FF of row buffering, a 32:1 × 24 b area mux (≈264 LUT), and a **simpler** FSM — the keeper
 scan and valid-mask-driven dispatch both disappear. **It also strengthens the determinism
-claim to its maximum form: `K` leaves the formula entirely, so worst case = best case = 40 cycles
-for every possible input.**
+claim to its maximum form: `K` leaves the formula entirely, so worst case = best case = 80 cycles
+at P=16 for every possible input.**
 
 ### This flips the Q5 / Part 1a verdict — the sorter becomes load-bearing
 
@@ -541,8 +513,8 @@ fastest structure needs a sort.
 
 ### Even restructured, the claim must name the processor class
 
-At 0.40 µs (P=32): **~80× faster than a Cortex-M7, ~2× faster than a Cortex-A53, and ~1.7× *slower*
-than hand-tuned AVX2 on a 3 GHz x86.** A 100 MHz fabric cannot out-run a 30×-clock superscalar SIMD
+At 0.48 µs (P=32): **~67× faster than a Cortex-M7, ~1.8× faster than a Cortex-A53, and ~2× *slower*
+than hand-tuned AVX2 on a 3 GHz x86** (all CPU figures estimates). A 100 MHz fabric cannot out-run a 30×-clock superscalar SIMD
 core at N=32; there is not enough parallelism available to close a 30× clock deficit. "Faster than
 *anything*" is not defensible. **"Faster than the embedded-class CPU an FPGA is actually deployed
 beside"** is defensible by two orders of magnitude — and it is what the proposal's own motivation
@@ -551,18 +523,18 @@ already says ("the edge CPU").
 ### The harder problem: end-to-end, UART makes any CPU comparison unwinnable
 
 A CPU already has the boxes in its memory — the detector put them there. The FPGA needs them
-shipped: **2.70 ms at 1 Mbaud versus 0.40 µs of compute, a factor of 6,750.** No serial link can be
+shipped: **2.70 ms at 1 Mbaud versus 0.48 µs of compute (P=32), a factor of ~5,600.** No serial link can be
 argued around. Three honest framings, in increasing strength:
 
 1. **Core-latency comparison.** Legitimate for an architecture study, provided the report states
    plainly that the UART is test harness, not datapath.
 2. **On-chip interface as future work.** Over AXI-Stream at 100 MHz / 64-bit, the 32 records land in
-   32 cycles = 0.32 µs, so end-to-end becomes 0.72 µs and the claim survives *with* transport
+   32 cycles = 0.32 µs, so end-to-end becomes 0.80 µs at P=32 and the claim survives *with* transport
    included. This is where the design belongs; say so.
 3. **Same-silicon head-to-head — the bulletproof version.** Put a **MicroBlaze** on the same
-   XC7A35T, run the NMS in software on it (~124 µs), and run the accelerator beside it (0.40 µs) over
-   AXI. Same chip, same clock, same memory, no interface asymmetry: **~300× measured, apples to
-   apples.** It is the only version of this claim that cannot be argued with.
+   XC7A35T, run the NMS in software on it (~124 µs), and run the accelerator beside it (0.48 µs at P=32) over
+   AXI. Same chip, same clock, same memory, no interface asymmetry: **~260× — an estimate until
+   both are built and measured, then apples to apples.** It is the only version of this claim that cannot be argued with.
 
 ---
 
@@ -585,8 +557,12 @@ data-independent.
 
 | P | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| cycles | 1032 | 520 | 264 | 136 | **72** | 40 |
-| µs @100 MHz | 10.32 | 5.20 | 2.64 | 1.36 | **0.72** | 0.40 |
+| cycles | 1040 | 528 | 272 | 144 | **80** | 48 |
+| µs @100 MHz | 10.40 | 5.28 | 2.72 | 1.44 | **0.80** | 0.48 |
+
+At `C = 8` with the 2 issue registers (`I`) the placed core needs, so the formula above gains
+`+ I`: `T = N²/P + L + I + C + 2`. An earlier revision tabulated `C = 2` and no issue registers
+(1032 … **72** … 40), which does not meet 100 MHz.
 
 *Superseded, for the report's comparison:* the keeper-serial design was
 `T_worst = N²/P + N(L+3) + C + 1 = Θ(N²/P + N·L)`, giving 291 cycles at P=16 with a data-dependent
@@ -599,7 +575,7 @@ Three things follow, and all three belong in the report:
 `N²/P = N` — and that configuration costs ~73% of the device. Any claim of `O(N)` NMS must state
 `P = N` as its precondition or it is false.
 
-**2. Determinism is now absolute, not merely bounded.** Every batch takes exactly 72 cycles at P=16,
+**2. Determinism is now absolute, not merely bounded.** Every batch takes exactly 80 cycles at P=16,
 whatever the data — the strongest possible form of the proposal's "highly deterministic execution"
 claim, and a genuine advantage over a CPU, whose *average* may beat this but whose worst case
 (cache misses, interrupts, scheduler) is far worse and unbounded.
@@ -612,12 +588,13 @@ it, at the cost of a 32:1 crossbar per lane and a data-dependent (non-determinis
 trade was made deliberately; say so.
 
 **3. The measured speedup is large against Python, modest against tuned C.** Part 1e has the numbers:
-**50–660× faster than Python** (measured across four cases), ~80× faster than a Cortex-M7,
-~2× faster than a Cortex-A53, and roughly at parity with hand-tuned AVX2 on a 3 GHz x86. State the
+**45–600× faster than Python** (measured across four cases), ~40× faster than a Cortex-M7,
+at rough parity with a Cortex-A53, and ~3.5× slower than hand-tuned AVX2 on a 3 GHz x86 (CPU figures
+estimated, at P=16). State the
 processor class every time the word "faster" appears; an unqualified "faster than any processor" is
 false and is the one claim an examiner will test.
 
-Sorter contribution is negligible in cycles: `C + 1 = 3` against 64 matrix-fill cycles at P=16. But
+Sorter contribution is small in cycles: `C + 1 = 9` against 64 matrix-fill cycles at P=16. But
 it is **architecturally required** — the rank-ordered row schedule needs the complete ranking before
 the first row issues, which a masked-argmax tree cannot supply (Part 1e).
 
@@ -645,7 +622,7 @@ Round trip is 264 B in + 6 B out = 2,700 bits:
 | **1,000,000** | **2.70 ms** | **8.1%** | **370.4** | **100.00** | **0.000%** |
 | 3,000,000 | 0.90 ms | 2.7% | 1111.1 | 33.33 | 1.000% |
 
-**Decided: design point 1 Mbaud** (decided). Three reasons: it puts the link at 7.9% of the frame
+**Decided: design point 1 Mbaud** (decided). Three reasons: it puts the link at 8.1% of the frame
 budget, which is unambiguously real-time; the divider is **exactly 100**, so there is zero baud
 error (3 Mbaud needs 33.33 → 1% error, near the tolerance limit); and beyond ~1 Mbaud **USB
 latency dominates the wire time anyway** (below), so faster buys nothing measurable.
@@ -679,8 +656,8 @@ hiding it.
 | 4 | `frame_rx` FSM | Hunt for `magic`; then shift 8 bytes into a 64-bit register and write `box_store[slot]`, `slot = count/8`; then 4 bytes → `present_mask`; then `seq`, then verify the CRC-8 over bytes 2..262. **Idle timeout** (no byte for > 2 byte-times mid-frame) resets to hunting. |
 | 5 | — | On a good frame, pulse `start`. On a CRC failure, drop the frame and re-hunt — never compute on corrupt data. |
 
-**Compute** — `SORT(3) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(4) → DONE`, exactly 72
-cycles = 0.72 µs at P=16, as Part 2. Areas are computed during LOAD and cost no cycles.
+**Compute** — `SORT(8) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(7) → DONE`, exactly 80
+cycles = 0.80 µs at P=16, as Part 2 (DRAIN is `L + I + 1` with the 2 issue registers). Areas are computed during LOAD and cost no cycles.
 
 **Output path**
 
@@ -728,7 +705,8 @@ receiver to hunting. Cost: 3 bytes (1.1% of the frame) and a small FSM.
 **`present_mask`** — bit *i* = "slot *i* holds a real detection". Its sole use is as the **load value
 of `valid_mask`** at start-of-batch instead of all-ones. An absent slot is therefore never a keeper
 and never dispatched; since `keep_mask` resets to 0, its output bit is provably 0. `present_mask=0`
-is well-defined (terminate immediately, `keep_mask=0`). All 32 slots are transmitted regardless —
+is well-defined: the batch runs its usual fixed T cycles and yields `keep_mask=0` — no early exit,
+which would make latency data-dependent. All 32 slots are transmitted regardless —
 only the mask says which are meaningful — which is what keeps the frame fixed-length and removes the
 padding/duplicate-zero-score problem structurally. The notebook's own 31-box set needs this on day
 one.
@@ -759,8 +737,12 @@ synthetic generator and the later detector front-end implement the identical seq
 
 1. **Confidence threshold** — drop boxes below a cutoff. A `Θ(n)` filter, **never a sort**; this is
    what keeps the accelerator's premise intact (P3).
-2. **Cap at 32** — if more than 32 survive, take 32. Document the rule used (highest confidence
-   first is a partial selection, not a full ordering).
+2. **Cap at 32** — if more than 32 survive, keep the 32 highest-confidence boxes. **This is a
+   scope limit, stated in the report:** any other rule (first 32, random 32) can drop a
+   high-scoring box and gives a result that differs from true NMS over the full set. Top-32 is a
+   Θ(n) selection (`numpy.argpartition`), not a sort — but it *is* ranking work on the host, so P3's
+   "the host never sorts" must be phrased as "the host never produces an ordering". In the normal
+   case the confidence threshold leaves ≤ 32 boxes and the cap never fires.
 3. **Clamp coordinates** into `[0, 4095]` and enforce `a > x`, `b > y`; drop or repair violators.
    The hardware clamps anyway (Q15), so this is defence in depth, not a correctness dependency.
 4. **Quantise** — `score = round(f × 65535)`.
@@ -774,7 +756,7 @@ demo path and the verification path cannot drift.
 
 - **Sorter** `bitonic32`: standard schedule `for kk in {2,4,8,16,32}, for jj = kk/2 downto 1, for i
   in 0..31 where (i and jj)=0`, partner `i xor jj`, `dir_desc = '1' when (i and kk) /= 0`. 15
-  sub-stages × 16 CAS = **240 CAS on 21-bit keys**, `PIPE_CUTS=2` → 3 cycles. Output is **ascending**,
+  sub-stages × 16 CAS = **240 CAS on 21-bit keys**, `PIPE_CUTS=8` → 8 cycles (2 does not meet 100 MHz, B5). Output is **ascending**,
   so the rank table reads reversed: `index_table(r) = idx(out(31−r))`.
 - **Suppression rows** `S(r)(j)` = "the rank-`r` box suppresses the box in slot `j`", produced one row
   per rank, `P` columns per cycle. **The 32×32 matrix is a conceptual model, not a storage
@@ -793,7 +775,8 @@ demo path and the verification path cannot drift.
 - **Lane pipeline, L=4**: (1) min/max + subtract + clamp; (2) `I = w*h` DSP; (3) `U`, `RHS`, `LHS`;
   (4) 33-bit compare → `suppress`.
 - **Masks** `valid_mask` / `keep_mask`, both in original-index space, updated by the resolve loop.
-- **FSM** `IDLE → LOAD → SORT(3) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L) → DONE`.
+- **FSM** `IDLE → LOAD → SORT(C) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L+1) → DONE`, with `LOAD`
+  owned by `frame_rx`; cycle-level design in [fsm_design.md](fsm_design.md).
   Areas are computed during `LOAD` as each record lands, so they cost no cycles.
   `FILL` issues row `r` for `r = 0..31` in **rank order** — `src = payload[index_table(r)]`.
   **Resolve**, one rank per cycle, trailing the fill by `L`:
@@ -846,7 +829,7 @@ stateDiagram-v2
   LOAD --> IDLE: CRC fail, status 0x01
   LOAD --> IDLE: busy, status 0x02
   LOAD --> SORT: CRC ok, areas already computed
-  SORT --> FILL: 3 cycles
+  SORT --> FILL: C = 8 cycles, index_table loads
   FILL --> FILL: row r, N/P cycles, resolve r-1 in parallel
   FILL --> DRAIN: rank 31 issued
   DRAIN --> DONE: L = 4
@@ -889,11 +872,13 @@ agreeing is far stronger evidence than one, and it is the real mitigation for L6
 `PATH`, so every script sources `~/Vivado/2026.1/Vivado/settings64.sh` first.
 - **Async input discipline**: the UART RX pin is the only asynchronous input — **2-flop
   synchroniser**, no exceptions. Everything else is single-domain, so there is no other CDC.
-- **Watchdog**: the FSM is now a fixed-length counter walk, so it cannot hang by construction — the
-  termination argument is structural rather than data-dependent. Keep a 7-bit cycle counter that
-  raises `status = 0x03` if `FILL` ever exceeds `N·⌈N/P⌉ + L + 8`, as a defence against a control bug
-  rather than an algorithmic one.
-- **Back-to-back frames**: compute (0.72 µs) finishes ~3,750× before the next frame can arrive
+- **Watchdog → consistency checks**: the FSM is a fixed-length counter walk, so it cannot hang by
+  construction — the termination argument is structural rather than data-dependent. The cycle-count
+  watchdog first planned here was dropped: it would count with the same counter it guards (and a
+  fixed 7-bit width overflows at P ≤ 2). Instead `status = 0x03` is raised if the lanes' `valid_out`
+  ever disagrees with the FSM's own tag pipeline, or if fewer than N ranks have resolved at `DONE`
+  ([fsm_design.md §7](fsm_design.md)).
+- **Back-to-back frames**: compute (0.80 µs) finishes ~3,400× before the next frame can arrive
   (2.70 ms), so a single buffer plus a `busy` flag suffices; frames arriving while busy are dropped
   and reported via `status = 0x02`. Double-buffering is not worth 2,048 flip-flops here.
 
@@ -911,12 +896,18 @@ agreeing is far stronger evidence than one, and it is the real mitigation for L6
 | masks, resolve, FSM, UART, packer | ~900 | ~450 | 0 |
 | **total** | **≈12,320 (59%)** | **≈7,240 (17%)** | **17 (19%)** |
 
+> **Superseded by measurement** ([results.md](results.md) §4). The sorter at the required
+> `PIPE_CUTS = 8` is **8,112 LUT / 5,376 FF**. The 16 lanes are **1,744 LUT / 1,616 FF / 32 DSP**:
+> half the LUTs estimated, but twice the DSPs, because `T_INT×U` did not fold. The projected total
+> is **≈11,550 LUT (55.5%), ≈10,490 FF (25.2%), 33 DSP (36.7%)**. It still fits with margin.
+
 The area mux is now broken out rather than hidden in the "misc" line — P11's honesty complaint about
 that line applied here too. Net effect of dropping the matrix: **−950 FF**, LUT roughly neutral once
 the area mux is counted properly, and one fewer module to verify.
 
-Threshold is a fixed generic (`T_INT=128`), so there is no control path and no `T_INT×U` multiplier.
-At P=32: ≈15,300 LUT (**73%**) and 33 DSP (37%) for 0.40 µs — lower than a naive scaling suggests,
+Threshold is a fixed generic (`T_INT=128`), so there is no control path. The `T_INT×U` multiply was
+expected to fold into shifts and **did not** — Vivado spends a second DSP on it (measured at C1).
+At P=32: ≈15,300 LUT (**73%**) and 65 DSP (72%) for 0.48 µs — lower than a naive scaling suggests,
 because at P=32 each lane owns exactly one column and needs no payload mux at all. Still a
 synthesis-sweep data point rather than the ship configuration: P9 flags the 32-way 48-bit broadcast
 fanout, not the LUT count, as the risk.
@@ -975,7 +966,7 @@ on zero-area input.
 | B2 | `src/components/cas.vhd`, `test/tb_cas.vhd` | `generic (W : positive := 21)`; ports `a, b : in unsigned(W-1 downto 0)`, `dir_desc`, `y0, y1`. `dir_desc='0'` → `y0=min, y1=max`; `'1'` reversed. Combinational. Testbench exhaustive at `W=4` plus directed 21-bit cases, self-checking per the [hello_tb.vhdl](../hello_tb.vhdl) `report`/`assert` pattern. First module through the GHDL flow end to end. |
 | B3 | `src/components/bitonic32.vhd`, `test/tb_bitonic32.vhd` | Generate schedule and reversed rank read exactly as Part 2. `generic PIPE_CUTS : natural := 2` (cuts after sub-stages 5 and 10). Testbench reads Python key vectors and checks the full permutation **including ties** against the Q18 order, for `PIPE_CUTS ∈ {0,2}`. |
 | B4 | `scripts/synth.tcl` | **Fast loop:** `source /opt/oss-cad-suite/environment && yosys -m ghdl -p "ghdl --std=08 src/components/nms_pkg.vhd src/components/cas.vhd src/components/bitonic32.vhd -e bitonic32; synth_xilinx -family xc7 -dsp; stat"` — seconds per iteration, and the ratio `LUT(W=64)/LUT(W=21) ≈ 2.4×` validates Q4 regardless of absolute error. |
-| **B5** | `scripts/synth.tcl` | **The gate that actually matters, and it comes early now that Vivado is in play.** `source ~/Vivado/2026.1/Vivado/settings64.sh` first (Vivado is not on `PATH`), then batch-mode (`vivado -mode batch -source scripts/synth.tcl`). The script uses **plain `read_vhdl`** — no `-vhdl2008`, per the language policy — and runs `synth_design` + `opt/place/route` on `bitonic32` **alone**, part `xc7a35tcpg236-1`, 100 MHz constraint. Record `report_utilization` and `report_timing_summary`. Three outcomes: **(a)** meets timing with `PIPE_CUTS=2` → P1 is closed, proceed; **(b)** misses → re-place the cuts from the actual timing paths (they are a generic list precisely for this) and re-run, then try `PIPE_CUTS=3`; **(c)** still misses → drop the core clock to 50 MHz, which costs 0.72 → 1.44 µs and changes nothing that matters (Part 1e). Also sweep `PIPE_CUTS ∈ {0,2,3,14}` here — that sweep *is* the report's Q2/Q3 evidence table, and it is nearly free once the script exists. **If LUT > 9,000, build the folded fallback** (32 key regs + one reused 16-CAS layer + `i XOR d` butterfly muxes, ≈2.3k LUT, 15 cycles — free against 2.70 ms) and re-gate. |
+| **B5** | `scripts/synth.tcl` | **The gate that actually matters, and it comes early now that Vivado is in play.** `source ~/Vivado/2026.1/Vivado/settings64.sh` first (Vivado is not on `PATH`), then batch-mode (`vivado -mode batch -source scripts/synth.tcl`). The script uses **plain `read_vhdl`** — no `-vhdl2008`, per the language policy — and runs `synth_design` + `opt/place/route` on `bitonic32` **alone**, part `xc7a35tcpg236-1`, 100 MHz constraint. Record `report_utilization` and `report_timing_summary`. Three outcomes: **(a)** meets timing with `PIPE_CUTS=2` → P1 is closed, proceed; **(b)** misses → re-place the cuts from the actual timing paths (they are a generic list precisely for this) and re-run, then try `PIPE_CUTS=3`; **(c)** still misses → drop the core clock to 50 MHz, which costs 0.72 → 1.44 µs and changes nothing that matters (Part 1e). Also sweep `PIPE_CUTS ∈ {0,2,3,14}` here — that sweep *is* the report's Q2/Q3 evidence table, and it is nearly free once the script exists. **If LUT > 9,000, build the folded fallback** (32 key regs + one reused 16-CAS layer + `i XOR d` butterfly muxes, ≈2.3k LUT, 15 cycles — free against 2.70 ms) and re-gate. **Outcome ([results.md](results.md) §2):** (a) failed — 2 cuts reach 53.9 MHz at 9,596 LUT, which also trips the 9,000-LUT fallback rule. A sweep over `PIPE_CUTS ∈ {2,4,8,15}` replaced re-placement: **8 is the lowest setting meeting 100 MHz (119.2 MHz, WNS +1.614 ns), at 8,112 LUT** — under the fallback threshold, so the folded sorter is not needed. |
 
 ### Phase C1 — one IoU lane, verified and area-measured
 
@@ -991,8 +982,13 @@ exactly 1 DSP**. **Check the DSP count first** — Yosys can map the 12×12 mult
 `-dsp`, inflating the LUT figure several-fold and firing the gate spuriously; if DSP = 0 the LUT
 number is meaningless. Vivado's DSP inference is the one to trust, which is why it is no longer
 deferred. Then confirm **P=16** fits: `P·DSP_lane ≤ 88` and
-`P·LUT_lane ≤ 20800 − LUT_sorter − 2400`. If it does not, step down to P=8 (1.36 µs, still 61×
+`P·LUT_lane ≤ 20800 − LUT_sorter − 2400`. If it does not, step down to P=8 (1.42 µs, still 25–40×
 faster than numpy).
+
+**Outcome ([results.md](results.md) §1):** 109 LUT (pass), **2 DSP (fails "exactly 1")**. The
+second DSP is `T_INT×U`, which did not fold. The fit test still passes: `16 × 2 = 32 ≤ 88`, and
+`16 × 109 = 1,744 ≤ 20,800 − 8,112 − 2,400`. So **P=16 was accepted, with the DSP miss recorded**
+and recovering the fold left open.
 
 **Execution stops here** — A, B and C1 retire the three risks that can invalidate the architecture:
 sorter area (B4), **sorter timing (B5)**, and lane cost/DSP inference (C1). The FSM is deliberately
@@ -1080,8 +1076,9 @@ It is not bulletproof. Sorting the claims into what can actually be stood behind
    degenerate or inverted then `min(a₁,a₂) ≤ aᵢ ≤ xᵢ ≤ max(x₁,x₂)`, so `t_w ≤ 0` and the clamp gives
    `I = 0`. Hence `area = 0 ⟹ I = 0`, and otherwise `I ≤ min(area₁, area₂)`, so `U ≥ 0` always.
    Asserted live through 20,000 randomised batches (below) without firing.
-5. **Latency is exactly `N²/P + L + C + 2` = 72 cycles = 0.72 µs at P=16 — for every possible
-   input.** Not a bound: an equality. `K` does not appear in the formula (Part 1d).
+5. **Latency is exactly `N²/P + L + I + C + 2` = 80 cycles = 0.80 µs at P=16, C=8, I=2 — for every
+   possible input.** Checked as an equality on every one of 1,020 batches by `tb_nms_core`, under
+   both GHDL and xsim. Not a bound: an equality. `K` does not appear in the formula (Part 1d).
 6. **The all-pairs restructure is equivalent to sequential NMS.** Argued from the two invariants in
    Q20 and **verified over 20,000 adversarial batches — heavy ties, 8-bit-resolution scores,
    inverted and zero-area boxes — with 0 mismatches.** This is the claim the whole speedup rests on,
@@ -1111,6 +1108,10 @@ timing report. **The stakes rose with the restructure:** the sorter is now archi
 If it still misses, the fallback is 3 cuts or a 50 MHz core clock — at 2.70 ms of
 link time, halving the core clock costs 3.5 µs and changes nothing.
 
+**Settled at B5:** exactly as feared, 2 cuts missed (53.9 MHz). 8 evenly spread cuts meet 100 MHz at
+119.2 MHz, so neither re-placement nor a slower clock was needed. The price is 6 cycles of latency
+(72 → 78).
+
 **P2 — N = 32 is a wall, not a starting point. Resolved: declared a hard scope limit** (user's
 call). The combinational bitonic network is `Θ(N log²N)`: N = 64 needs 21 stages × 32 CAS =
 **672 CAS ≈ 20,160 LUT — it does not fit on an XC7A35T at all.** The report states this wall with
@@ -1120,8 +1121,10 @@ on a larger device. Folded stays a B4 fallback only; N = 64 is out of scope.
 **P3 — the value proposition's circularity. Resolved by the host sanitisation contract** (Part 2).
 Real detectors emit hundreds to thousands of boxes, so reaching 32 requires host-side selection — and
 if the host *sorts* to feed the sorter, the premise collapses. The contract avoids that: the host
-applies a **confidence threshold**, a `Θ(n)` filter, and takes at most 32 survivors. It never sorts.
-Say this explicitly; an examiner will ask.
+applies a **confidence threshold**, a `Θ(n)` filter, and takes at most 32 survivors. It never
+produces an ordering. If more than 32 survive, the cap keeps the top 32 by confidence, which is a
+Θ(n) selection and not a sort. It is still ranking work, so the report must state it as a scope
+limit (Part 2, sanitisation step 2). Say this explicitly; an examiner will ask.
 
 **P4 — framing.** Addressed above (magic + CRC-8 + seq + timeout), but it was absent from the original
 plan and is the single most likely cause of a "works in simulation, garbage on hardware" week.
@@ -1143,9 +1146,10 @@ is also available (see decision O3).
 
 **P8 — the 30 LUT/CAS figure assumes a specific packing** (two 2:1 mux bits per LUT6 with shared
 select). Vivado may use F7MUX/F8MUX or CARRY4 compares and land ±30% either way. Every area number
-in Part 2 inherits that error bar, including the 61% total.
+in Part 2 inherits that error bar. *(Measured: 32 LUT for a standalone CAS, 33.8 per CAS
+in-network at 8 cuts — inside the band. The projected total is now 55.5%.)*
 
-**P9 — routing, not logic, is the risk at high P.** 61% LUT utilisation is comfortable; the P = 32
+**P9 — routing, not logic, is the risk at high P.** 55.5% projected LUT utilisation is comfortable; the P = 32
 configuration at 73% with a 32-way 48-bit row-source broadcast is where placement gets hard. Expect the
 P-sweep to fail at the top end for routing reasons, and report that as a finding rather than a
 defect.
@@ -1171,7 +1175,7 @@ Part 2; the table is retained so the report can show they were found and closed 
 |---|---|---|---|
 | **L1** | **XOR-8 checksum was weak.** It misses any even number of bit errors in the same bit position across the payload. | ≈1/256 of random corruptions pass undetected on a 260-byte payload, and a corrupt record yields a plausible-looking wrong mask. | **CRC-8 over bytes 2..262** (≈30 LUT), giving proper burst-error detection. |
 | **L2** | **No frame sequence number.** | After a timeout, a late reply is indistinguishable from the next frame's reply, and the host silently mis-attributes results. | **1-byte `seq`**, echoed in the reply. |
-| **L3** | **`busy` drops frames silently.** | Cannot occur at 2.70 ms vs 0.72 µs — but "cannot occur" is not "guaranteed", and the host would never learn. | `status = 0x02` (busy). |
+| **L3** | **`busy` drops frames silently.** | Cannot occur at 2.70 ms vs 0.80 µs — but "cannot occur" is not "guaranteed", and the host would never learn. | `status = 0x02` (busy). |
 | **L4** | **Watchdog action undefined.** P4's counter detects a >32-iteration hang but nothing consumes the flag. | A detected fault still hangs the host. | `status = 0x03` (internal error). |
 | **L5** | **Quantise-then-sort ordering.** If the model sorted float scores and the RTL sorts u16, two floats quantising to the same integer could order differently — a mismatch with no bug in either. | Silent testbench failure at the worst possible place to debug. | Already implied ("no floats in `nms_model`"), but make it explicit: **quantisation happens at the generator boundary; the model sees integers only, and sorts them.** |
 | **L6** | **Simulation/synthesis mismatch.** Vivado could infer a latch from an incomplete `if`/`case` that GHDL simulates happily, or treat a 2008 construct differently. | Works in simulation, wrong on hardware — the classic. | Four layers, all now decided: RTL in the **VHDL-93 subset** so no 2008 gap exists; **concurrent assignments for combinational logic** so no sensitivity list can be wrong; `ghdl -a -Wsensitivity -Wall --warn-error`; **xsim as an independent second simulator at C4**; and read Vivado's synthesis warnings rather than skipping to the bitstream. |
@@ -1200,6 +1204,10 @@ corresponding phase starts; none of them affect anything already frozen:
   value would not work, since all-ones is a legitimate mask when all 32 boxes survive. **And** the
   host sets a read timeout, so a reply lost on the wire surfaces as an error rather than a hang.
   Reply is 6 bytes (`status`, `seq`, 4-byte mask); the Part 1b table already accounts for it.
+- **O8 — CRC-8 parameters. Decided:** CRC-8/SMBUS — polynomial `0x07`, init `0x00`, MSB-first,
+  no reflection, no final XOR, check value `0xF4` over `"123456789"`. It is the plain textbook
+  CRC-8 and the cheapest to implement bitwise in `frame_rx`. Frozen in
+  [architecture.md §3](architecture.md); `params.crc8` is the reference implementation.
 
 ---
 
@@ -1212,28 +1220,38 @@ it shows which claims were tested rather than assumed. **Every row is a claim th
 |---|---|---|
 | architecture.md and the notebook disagree on 11 vs 12-bit coords | The 11-bit figure is an intermediate derivation the same paragraph *rejects*. They already agree. | §2's re-derivation exercise deleted |
 | Keep flag goes in "one of the 4 spare bits" | 4×12 + 16 = 64 exactly. **Zero spare bits.** | Separate 32-bit mask; also removes output reordering |
-| A lane needs 3 DSPs → 97 at P=32, "does not fit" | Areas are per-*box*; `T_INT=128` makes the threshold a shift. **1 DSP/lane.** | Wrong by 3×; P=32 costs 33 of 90 |
-| Sorter is "fully pipelined" (§2) / "purely combinatorial" (§3.1) | Combinational won't close 100 MHz (15 levels); full pipelining costs 10,080 FF for throughput nothing can consume | **2 register cuts**, 3 cycles, 1,344 FF |
+| A lane needs 3 DSPs → 97 at P=32, "does not fit" | Areas are per-*box*; `T_INT=128` makes the threshold a shift. **1 DSP/lane.** | Wrong by 3×; P=32 costs 33 of 90 — *but measurement later showed 2 DSP/lane (row below)* |
+| Sorter is "fully pipelined" (§2) / "purely combinatorial" (§3.1) | Combinational won't close 100 MHz (15 levels); full pipelining costs 10,080 FF for throughput nothing can consume | **2 register cuts**, 3 cycles, 1,344 FF — *superseded: 8 cuts (row below)* |
 | "Re-scope the real-time claim" | A retreat, not an answer. The problem was one constant. | **1 Mbaud → 2.70 ms, 8.1% of frame.** Real-time holds |
 | Yosys LUT thresholds as pass/fail | Yosys is 10–30% off Vivado and can miss DSP inference entirely | Ratios only; Vivado is the authority, gated early at B5 |
 | "Fixed-length frame, the receiver is a byte counter" | One dropped byte desynchronises **permanently**; every later frame looks like an RTL bug | magic + CRC-8 + `seq` + idle timeout |
-| Keeper-serial FSM is fast enough | **128 of 259 cycles are pipeline refill** — the `L` drain paid 32 times | All-pairs restructure: **72 cycles, 4× better** |
+| Keeper-serial FSM is fast enough | **128 of 259 cycles are pipeline refill** — the `L` drain paid 32 times | All-pairs restructure: **80 cycles, 3.7× better** (72 / 4.0× at the untimed `C = 2`, no issue registers) |
 | Max tree beats the sorter, so the sorter is decorative | True *only* for keeper-serial. Rank-ordered rows need the full ranking up front | **Sorter is architecturally required** |
-| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 50–660× vs Python | Claim must name the processor class |
+| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 45–600× vs Python | Claim must name the processor class |
 | Suppression matrix needs 32×32 = 1,024 FF | Rows are produced and consumed in rank order 1 cycle apart | **2-row buffer, ~74 FF.** −950 FF |
 | `index_table` read once per rank | Fill reads rank `r` while resolve reads `r−1` — **two ports** | Carry `idx_r` with its row |
 | Part 1d cycle table | P=1/2/4 dropped the `(C+1)` term | 1029/517/261 → **1032/520/264** |
 | P=32 costs ~80% LUT | At P=32 each lane owns one column and needs no payload mux | **73%** |
 | Golden model implements the RTL's algorithm | Model and RTL would share the same restructuring — a shared misconception passes silently | Model implements **both** forms, asserted equal |
 | VHDL-2008 (`--std=08`) throughout, RTL included | Vivado synthesis supports a documented *subset* of 2008, and xsim's subset differs again — while our RTL needs **zero** 2008 features | RTL in the **VHDL-93 subset**, testbenches 2008; plain `read_vhdl` |
+| "2 register cuts close 100 MHz comfortably" (Q2) | B5 measured **53.9 MHz**; per sub-stage ~3.7 ns, not 1.5–2.5 | **`PIPE_CUTS = 8`**, 119.2 MHz, cheaper in LUTs than 2. T = **78**, not 72 |
+| "`T_INT×U` folds to shifts — 1 DSP/lane" (Q6) | C1 measured **2 DSP/lane**; Vivado inferred a DSP for the constant multiply | 33 DSP at P=16 (36.7%); fits. Fold recovery open |
+| The frozen wire protocol is complete | It named a CRC-8 without polynomial, init or reflection — host and RTL could not interoperate from the spec | **CRC-8/SMBUS**, O8 |
+| "`present_mask = 0` terminates immediately" | An early exit is a data-dependent trip count, contradicting Tier 1 #1 and #5 | Full fixed walk, `keep_mask = 0` |
+| "Pivot to 3DGS; NMS on hold" | Part 0 ran and found 3DGS sorting a real bottleneck — but the team chose to finish NMS | **NMS is the project** (2026-09-24); 3DGS is future work. The premise "the repo is named …-3dgs" was false |
 
-**The largest finding, which arrived last and outranks all of the above:** the project's *premise*
-was wrong, not just its details. Measured on this machine, NMS at N=32 costs a CPU **47 µs — 0.14%
-of a 33 ms frame**, so there is no bottleneck to accelerate; behind the UART the accelerated system
-is **10× slower** than not accelerating; and at a 0.003% duty cycle the FPGA's static power exceeds
-the energy the acceleration saves. Every number in Parts 1–5 is correct, and the thing they describe
-was not worth building. That is what Part 0 exists to fix — and notably, the sorting work survives
-the pivot intact, because in 3DGS the sort really is the bottleneck.
+**The largest finding, which arrived last and outranks all of the above:** the project's
+*system-level premise* is weak, not just its details. A vectorised CPU does NMS at N=32 in
+**36–57 µs — about 0.1–0.2% of a 33 ms frame**, so there is no system bottleneck to accelerate. Behind
+the UART at 1 Mbaud, the 2.70 ms round trip makes the accelerated system roughly 50–75× slower end to
+end than not accelerating. And, as an estimate, at a ~0.002% duty cycle the FPGA's static power
+exceeds the energy the acceleration saves. (An earlier revision quoted 47 µs, 83 µs and "10×
+slower"; those mixed a withdrawn single-batch timing with 3 Mbaud transport.)
+
+The team weighed pivoting to 3DGS, where the sort really is the bottleneck (Part 0), and **chose to
+finish NMS** (2026-09-24). The report therefore claims **core latency and determinism** — 80 cycles
+for every input — and states the system-level finding above as its honest scope, with 3DGS as
+future work to which the sorter transfers unchanged.
 
 Two claims were verified rather than argued, because the whole design rests on them:
 
@@ -1242,9 +1260,10 @@ Two claims were verified rather than argued, because the whole design rests on t
 - **`U = area₁ + area₂ − I` never underflows** — proved, then asserted live through those same 20,000
   batches without firing.
 
-**Still unresolved, and honestly so:** P1 (the 2-cut timing claim) is unavoidable now that the sorter
-is required, and stays open until B5 runs. The 30 LUT/CAS packing assumption carries ±30% into every
-area figure. Real USB round-trip latency is unknowable until hardware.
+**Still unresolved, and honestly so:** P1 is closed — B5 showed 2 cuts fail and 8 pass — and the
+area figures are now measured for every built block. What remains open: the `T_INT×U` DSP fold,
+area for the blocks not yet written (FSM, `box_store`, UART), the integrated design's routing, and
+real USB round-trip latency, which is unknowable until hardware.
 
 ---
 
@@ -1289,7 +1308,7 @@ restructuring. That is why `nms_model.py` keeps **both** algorithm forms.
   and no boundary cases, so passing it proves almost nothing.
 - **Split the sweeps by simulator cost, or someone will wait hours for nothing.** The
   20,000-batch model-vs-model equivalence sweep and the millions-of-pairs property test run **in
-  Python** (seconds). GHDL runs the ~12 curated cases plus ~1,000 random batches — 1,000 × 72 cycles
+  Python** (seconds). GHDL runs the ~12 curated cases plus ~1,000 random batches — 1,000 × 80 cycles
   is trivial to simulate, but 20,000 batches of ASCII vectors is ~11 MB of file I/O, which is where
   the time actually goes. **Large vector sets are generated on demand and gitignored**; only the
   curated cases are committed.
