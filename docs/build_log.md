@@ -922,3 +922,92 @@ the FSM and UART. **`P = 16` is no longer provisional.**
 The DSP target remains worth recovering — at 1 DSP per lane the budget halves to 16 — but it
 is an optimisation with headroom behind it, not a blocker. Forcing the fold is the next
 candidate, and it does not change any interface.
+
+---
+
+### M2 — port paths were never timed; re-measured                     2026-09-24
+
+A review of the `nms_ctrl` design found that `scripts/synth.tcl` set only `create_clock`. With
+no `set_input_delay` / `set_output_delay`, Vivado treats input-port → register and register →
+output-port paths as *unconstrained*, and leaves them out of the WNS the script reports. Every
+clocked figure before this entry was therefore internal-segment only:
+
+- **`iou_lane`'s whole stage 1** (min/max, subtract, clamp) sits between the ports and the `s1_*`
+  registers, so it was never timed.
+- **`bitonic32`'s first and last segments** were never timed.
+
+The script now constrains every data port with a zero delay against `clk`, modelling each
+neighbour as a register at the boundary. Re-measured:
+
+| module | before | after | critical path now |
+|---|---|---|---|
+| `iou_lane` | 170.1 MHz | **139.6 MHz**, WNS +2.839 ns | port `k_a` → DSP reset pin (stage 1; the clamp was folded into the multiplier's reset) |
+| `bitonic32` (`PIPE_CUTS = 8`) | 119.2 MHz | **116.7 MHz**, WNS +1.434 ns | internal, after sub-stage 10 → after 12 (placement variation) |
+
+Both still clear 100 MHz. The finding that matters is the lane: with 2.84 ns left, the
+integration path `index_table` → 32:1 × 72 b row-source mux → lane stage 1 is tight. It cannot
+be measured until C4 wires the mux. If it misses, a datapath issue register is one more lane
+stage, which `nms_ctrl` absorbs through `LANE_LATENCY` (T 78 → 79) with no logic change.
+
+---
+
+### C3 — `nms_ctrl`, the all-pairs control FSM                          2026-09-24
+
+Built to [fsm_design.md](fsm_design.md), which was reviewed first. The review added the explicit
+start/busy rule for `frame_rx` and illegal-state recovery. `src/components/nms_ctrl.vhd`, one
+clocked process, VHDL-93:
+
+`IDLE → SORT(C) → FILL(N·G) → DRAIN(L+1) → DONE → IDLE`, with resolve driven by a valid bit
+that travels with the data rather than by the state register.
+
+**`tb_nms_ctrl`** drives the real `bitonic32` and replays the lanes from `.trace`. It checks:
+
+- the final mask;
+- `keep_mask` and `valid_mask` after **every** resolve edge (via a VHDL-2008 external name,
+  which GHDL 4.1 accepts, so no debug port was needed);
+- latency from both sides;
+- the issue schedule, in the stub.
+
+It runs over all 20 cases back to back, then four directed cases: start during FILL, rst during
+FILL, a stub one cycle slow (status `0x03`), and recovery after it.
+
+**Passes at every sweep point:**
+
+| configuration | T |
+|---|---|
+| `PIPE_CUTS` = 8 | 78 |
+| `PIPE_CUTS` = 2 | 72 |
+| `PIPE_CUTS` = 0 | 70 |
+| P = 1 | 1038 |
+| P = 32 | 46 |
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| `index_table(r)` read unreversed | killed — stub: "issue 0: row source is slot 31, rank 0 is slot 0" |
+| SORT waits `C − 1` | killed — stale `index_table`, same stub assertion |
+| DRAIN lasts `L`, not `L + 1` | killed — "done after only 76 edges; faster than T = 78" |
+| row applied without the `kept` test | killed — `valid_mask` trace mismatch at rank 1 |
+| column groups swapped in the row merge | killed — `valid_mask` trace mismatch at rank 0 |
+| lane-latency consistency check disabled | killed — "mistimed lanes went undetected" |
+| `kept` reads the next row's index | killed — `keep_mask` trace mismatch at rank 18 of `all_equal` |
+| resolve does not clear `valid_mask(idx_r)` when not kept | **survived** |
+
+**The survivor is an equivalent mutant, not a blind spot.** `kept` *is* `valid_mask(idx_r)`,
+so when a box is not kept its own bit is already 0, and clearing it changes nothing. The
+"always clear `valid_mask(idx_r)`" in plan.md's resolve step is redundant as a matter of logic.
+When the box is kept it is redundant a second time, because every row carries its own diagonal
+bit. It is kept in the RTL as cheap insurance against a lane that ever fails to suppress itself.
+The kept-index mutant replaced it as the check on that part of resolve. Note that it was caught
+only mid-batch, at rank 18: the per-rank trace check was doing work the final mask alone could
+not.
+
+#### Measured
+
+| LUT | FF | DSP | latches | Fmax |
+|---|---|---|---|---|
+| 382 (1.8%) | 300 | 0 | 0 | 175.0 MHz, WNS +4.286 ns |
+
+The critical path is `cnt` → `row_src`, the `index_table` read. In the integrated design that
+path continues into the row-source mux and lane stage 1, which is the C4 risk recorded in M2.

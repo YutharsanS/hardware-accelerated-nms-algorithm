@@ -97,11 +97,11 @@ package nms_pkg is
     -- each, that is the 7,200 LUT (34.6%) the area budget is built on.
     constant CAS_COUNT : natural := SORT_SUBSTAGES * (N / 2);
 
-    -- Register cuts inside the bitonic network, giving a 3-cycle sort. 0 is purely
-    -- combinational and will not close 100 MHz; 14 is fully pipelined and costs 10k FF
-    -- for throughput nothing can consume. One cut per sub-stage is the finest possible,
-    -- so this is bounded above by SORT_SUBSTAGES.
-    constant PIPE_CUTS : natural := 2;
+    -- Register cuts inside the bitonic network; the sort takes exactly this many cycles.
+    -- 8 is the lowest swept value that meets 100 MHz after place and route (119.2 MHz,
+    -- docs/results.md section 2); 2 reaches only 53.9 MHz. 0 is purely combinational;
+    -- one cut per sub-stage is the finest possible, so this is bounded by SORT_SUBSTAGES.
+    constant PIPE_CUTS : natural := 8;
 
     -- Exact batch latency at P_DEFAULT. An equality, not a bound: no term depends on the
     -- data, so worst case equals best case for every possible input.
@@ -128,6 +128,11 @@ package nms_pkg is
 
     -- Exactly 100, so there is zero baud error. tb_params asserts the division is exact.
     constant BAUD_DIV : natural := CLOCK_HZ / BAUD;
+
+    -- CRC-8/SMBUS over frame bytes 2..262: x^8 + x^2 + x + 1, MSB first, no reflection,
+    -- no final XOR. Check value for ASCII "123456789" is 16#F4#.
+    constant CRC8_POLY : natural := 16#07#;
+    constant CRC8_INIT : natural := 16#00#;
 
     -- --- types ---------------------------------------------------------------------
 

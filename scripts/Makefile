@@ -43,7 +43,8 @@ RUNFLAGS   = --assert-level=error --stop-time=$(STOP_TIME)
 RTL = src/components/nms_pkg.vhd \
       src/components/cas.vhd \
       src/components/bitonic32.vhd \
-      src/components/iou_lane.vhd
+      src/components/iou_lane.vhd \
+      src/components/nms_ctrl.vhd
 
 # Any RTL file not named above. Adding a module means declaring where it sits in the
 # dependency order, so an omission fails the build with a message instead of being
@@ -57,15 +58,19 @@ TB_ALL  = $(basename $(notdir $(TB_SRC)))
 # Testbenches that must run in more than one configuration. Each word is one run's extra
 # ghdl -r flags; a testbench with no SWEEP_ entry gets a single run with no overrides.
 #
-# bitonic32 is verified both purely combinational and with its two register cuts, from one
-# testbench that takes the latency as a generic. Running only the shipped configuration
-# would leave the combinational path -- the PIPE_CUTS=0 point in B3.2's timing sweep --
-# unverified for correctness.
-SWEEP_tb_bitonic32 = -gPIPE_CUTS=0 -gPIPE_CUTS=2
+# bitonic32 is verified purely combinational, at the old default of two cuts, and at the
+# shipped eight (the lowest that meets 100 MHz), from one testbench that takes the latency
+# as a generic. Running only the shipped configuration would leave the combinational path
+# -- the PIPE_CUTS=0 point in B3.2's timing sweep -- unverified for correctness.
+SWEEP_tb_bitonic32 = -gPIPE_CUTS=0 -gPIPE_CUTS=2 -gPIPE_CUTS=8
 
 # The lane runs at the shipped threshold and at the maximum. Only T_INT=255 drives the
 # RHS above 2**31; see docs/build_log.md B4.1 for why the 33rd bit stays unreachable.
 SWEEP_tb_iou_lane  = -gT_INT=128 -gT_INT=255
+
+# The control FSM runs at the shipped point, the old sorter default, the combinational
+# sorter (the IDLE -> FILL path), and both extremes of the column-group count G = N/P.
+SWEEP_tb_nms_ctrl  = -gPIPE_CUTS=8 -gPIPE_CUTS=2 -gPIPE_CUTS=0 -gP=1 -gP=32
 
 PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the

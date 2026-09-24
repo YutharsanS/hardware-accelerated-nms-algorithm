@@ -77,6 +77,8 @@ EXPECTED: dict[str, int] = {
     "CLOCK_HZ": p.CLOCK_HZ,
     "BAUD": p.BAUD,
     "BAUD_DIV": p.CLOCK_HZ // p.BAUD,
+    "CRC8_POLY": p.CRC8_POLY,
+    "CRC8_INIT": p.CRC8_INIT,
 }
 
 
