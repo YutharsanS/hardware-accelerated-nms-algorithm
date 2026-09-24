@@ -19,14 +19,14 @@ point, they bound what the project can honestly claim:
   in **36–57 µs** (numpy all-pairs, measured across four cases, Part 1e), about 0.1–0.2% of a
   33 ms frame.
 - **End to end, the host is faster.** Behind the UART the round trip is **2.70 ms** (264 B in +
-  6 B out at 1 Mbaud) against **0.78 µs** of compute. Transfer is O(N) at 80 µs per box
+  6 B out at 1 Mbaud) against **0.80 µs** of compute. Transfer is O(N) at 80 µs per box
   (8 B × 10 bits); CPU compute is O(N²) at ~0.07 µs per pair. The crossover is around N ≈ 2,400,
   far past the N = 32 wall (P2).
 - **Energy does not rescue it** — an estimate, not a measurement: at a ~0.002% duty cycle the
   device's static power per frame exceeds the energy the CPU spends on the NMS.
 
-So the claims are **core latency and determinism**: 78 cycles, identical for every input,
-46–73× faster than vectorised Python (measured) and ~40× faster than a Cortex-M7 (estimate),
+So the claims are **core latency and determinism**: 80 cycles, identical for every input,
+45–71× faster than vectorised Python (measured) and ~40× faster than a Cortex-M7 (estimate),
 Part 1e.
 This matches [architecture.md §11](architecture.md).
 
@@ -37,11 +37,15 @@ This matches [architecture.md §11](architecture.md).
 
 ### Where the work stands
 
-A, B, C1, C2 and C3 are done. The spec is frozen, the golden model and vectors exist, and
-`cas`, `bitonic32`, `iou_lane`, `box_store` and `nms_ctrl` (designed in
-[fsm_design.md](fsm_design.md)) are verified and measured ([results.md](results.md)). Next is
-C4 integration. The measured segments show the row-source path needs two register stages, which
-makes T = 80 cycles rather than 78 ([results.md](results.md) §5). See the Part 3 roadmap.
+A, B and C1–C4 are done. The spec is frozen, the golden model and vectors exist, and every
+compute block is verified and measured ([results.md](results.md)). They are integrated as
+`nms_core` (`box_store` + `bitonic32` + `nms_ctrl` + 16 lanes + 2 issue registers), which is:
+- bit-exact on 1,020 batches under both GHDL and xsim, with T = 80 checked as an equality on
+  every batch;
+- 59.5% LUT, 33 DSP and 100 MHz with +0.202 ns of slack, when placed and routed.
+
+Next is D1: UART, `frame_rx` / `frame_tx`, and the board top. The thin timing margin is the risk
+to watch there (results.md §5). See the Part 3 roadmap.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
 `get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,
@@ -81,6 +85,7 @@ and Part 6 records it:
 | sorter 7,200 LUT / 1,344 FF | **8,112 LUT / 5,376 FF** at 8 cuts | projected total ≈ 11,550 LUT (55.5%), ≈ 10,490 FF (25.2%) |
 | CRC-8 unspecified | **CRC-8/SMBUS** (poly `0x07`, init `0x00`, check `0xF4`) | [architecture.md §3](architecture.md), `params.crc8` |
 | `present_mask = 0` → "terminate immediately" | full fixed walk, `keep_mask = 0` | latency stays data-independent |
+| row-source path assumed to fit one cycle | 14.9 ns in the placed core (67 MHz) | **`ISSUE_REGS = 2`** register stages; **T = N²/P + L + I + C + 2 = 80 cycles = 0.80 µs** — this row supersedes the 78 in the first |
 | cycle-count watchdog | consistency checks ([fsm_design.md §7](fsm_design.md)) | a real control bug is caught, not a broken counter re-measured |
 
 ## A0 — What was wrong in the original NMS plan
@@ -184,8 +189,8 @@ are.** Worst-case cycles for the **keeper-serial** structure this question assum
 | cycles | 1251 | 739 | 483 | 355 | 291 | 259 |
 | µs @100 MHz | 12.51 | 7.39 | 4.83 | 3.55 | 2.91 | 2.59 |
 
-**Superseded by Part 1e** — the adopted all-pairs structure gives **78 cycles / 0.78 µs at the
-chosen P=16** (with the `PIPE_CUTS = 8` that timing requires), 3.8× better, because it stops paying
+**Superseded by Part 1e** — the adopted all-pairs structure gives **80 cycles / 0.80 µs at the
+chosen P=16** (with the `PIPE_CUTS = 8` and 2 issue registers that timing requires), 3.7× better, because it stops paying
 the pipeline drain once per keeper. `P` remains a generic so the sweep is a measured scaling curve.
 The DSP cost per lane is the same in either structure: **2 as measured**, so 33 DSPs at P=16.
 
@@ -241,7 +246,7 @@ frees the field. Floats never enter the vector files. Order-preserving for 2-dec
 (decided). The record gains no class ID and the 64-bit layout stands. The report must say
 this outright — real NMS runs per class, and leaving the omission unmentioned is what plan.md §2
 warns against. Note the escape hatch for anyone extending it: 4 bits carved from the score gives 16
-classes, and the FSM re-runs per class in 16 × 0.78 µs = 12.5 µs, still trivial against 2.70 ms of
+classes, and the FSM re-runs per class in 16 × 0.80 µs = 12.8 µs, still trivial against 2.70 ms of
 link time.
 
 ### §3 The two likely bugs
@@ -392,12 +397,12 @@ suppression writes retire. Half the latency is pipeline refill, not work.
 Benchmarked on the dev machine (**13th Gen Intel i5-13500H, 16 cores**), 32 boxes, 2,000 iterations,
 12-bit coords and 16-bit scores as specified:
 
-| implementation | measured | vs accelerator @P=16 (0.78 µs) |
+| implementation | measured | vs accelerator @P=16 (0.80 µs) |
 |---|---|---|
-| notebook float NMS, as written | 37–446 µs | 47–572× faster |
-| planned integer NMS (same predicate as the RTL) | 45–477 µs | 58–612× faster |
-| numpy all-pairs, vectorised — fair Python upper bound | **36–57 µs** | **46–73× faster** |
-| integer all-pairs (what the RTL implements) | 852–948 µs | 1092–1215× faster |
+| notebook float NMS, as written | 37–446 µs | 46–558× faster |
+| planned integer NMS (same predicate as the RTL) | 45–477 µs | 56–596× faster |
+| numpy all-pairs, vectorised — fair Python upper bound | **36–57 µs** | **45–71× faster** |
+| integer all-pairs (what the RTL implements) | 852–948 µs | 1065–1185× faster |
 
 **Corrected at B1.4.** The single-number figures first recorded here (583 / 474 / 83 µs) were
 measured on one random batch. Re-measured across four committed cases, the spread *between
@@ -406,7 +411,7 @@ sequential loop short-circuits as boxes get suppressed. `all_survive` is its wor
 (nothing suppressed, no short-circuit) and `all_equal` its best. Quoting one number without
 naming the batch was misleading, so the ranges above replace it.
 
-**Yes — decisively faster than the Python testbench, by 46–73× even against a properly vectorised
+**Yes — decisively faster than the Python testbench, by 45–71× even against a properly vectorised
 numpy implementation** that uses the same all-pairs structure as the proposed hardware.
 
 **The 16 cores do not help.** A bare thread-pool round trip with *zero work* measures **18.47 µs** on
@@ -417,9 +422,9 @@ asymmetry is precisely the accelerator's argument.
 
 Caveat to keep in the report so it cannot ambush you: at N=32 numpy is *interpreter-overhead*
 dominated, not compute dominated — ~30 numpy calls at 1–3 µs of overhead each. A tuned C/AVX2
-implementation is estimated below at ~0.23 µs, about 3× *faster* than the accelerator. The
-honest claim is **"46–610× faster than Python (measured), ~40× faster than a Cortex-M7
-(estimate), ~3× slower than hand-tuned desktop SIMD (estimate)."**
+implementation is estimated below at ~0.23 µs, about 3.5× *faster* than the accelerator. The
+honest claim is **"45–600× faster than Python (measured), ~40× faster than a Cortex-M7
+(estimate), ~3.5× slower than hand-tuned desktop SIMD (estimate)."**
 
 ### Estimated baselines for other processor classes
 
@@ -457,14 +462,15 @@ T = (C+1) + N·⌈N/P⌉ + L + 1        — fully data-independent, no K term
 
 | P | keeper-serial | restructured | speedup |
 |---|---|---|---|
-| 8 | 361 cy / 3.61 µs | 142 cy / **1.42 µs** | 2.5× |
-| **16** | 297 cy / 2.97 µs | **78 cy / 0.78 µs** | **3.8×** |
-| 32 | 265 cy / 2.65 µs | 46 cy / **0.46 µs** | 5.8× |
+| 8 | 361 cy / 3.61 µs | 144 cy / **1.44 µs** | 2.5× |
+| **16** | 297 cy / 2.97 µs | **80 cy / 0.80 µs** | **3.7×** |
+| 32 | 265 cy / 2.65 µs | 48 cy / **0.48 µs** | 5.5× |
 
-Both columns at `C = PIPE_CUTS = 8`, the setting 100 MHz requires. An earlier revision used
-`C = 2` and gave 72 cycles and 4.0× at P=16.
+Both columns at `C = PIPE_CUTS = 8`, the setting 100 MHz requires; the restructured column also
+carries the 2 issue registers the placed core needs (`I` in `T = (C+1) + N·⌈N/P⌉ + L + I + 1`).
+An earlier revision used `C = 2`, no issue registers, and gave 72 cycles and 4.0× at P=16.
 
-**Adopted: the restructure at P=16** (decided) — 0.78 µs, ~55.5% LUT (projected from measured blocks), comfortable routing
+**Adopted: the restructure at P=16** (decided) — 0.80 µs, 59.5% LUT (measured, whole core), comfortable routing
 margin. P=32 stays a synthesis-sweep data point; P9 flags it as where routing gets hard.
 
 The overlap is the whole trick — resolve consumes row `r` while the lanes are already computing row
@@ -472,7 +478,7 @@ The overlap is the whole trick — resolve consumes row `r` while the lanes are 
 
 ```mermaid
 gantt
-  title All-pairs schedule at P=16, C=8 - 78 cycles total
+  title All-pairs schedule at P=16, C=8, I=2 - 80 cycles total
   dateFormat X
   axisFormat %s
   section Sort
@@ -482,10 +488,10 @@ gantt
   fill rank 1           :11, 13
   fill rank 2           :13, 15
   fill rank 31          :71, 73
-  section Resolve - trails fill by L+1
-  resolve rank 0        :14, 15
-  resolve rank 1        :16, 17
-  resolve rank 31       :76, 78
+  section Resolve - trails fill by L+I+1
+  resolve rank 0        :16, 17
+  resolve rank 1        :18, 19
+  resolve rank 31       :78, 80
 ```
 
 Contrast the keeper-serial design, where every keeper paid its own 4-cycle drain: 32 × L = 128 of
@@ -493,7 +499,7 @@ its 259 cycles were pipeline refill.
 
 Cost: ~74 FF of row buffering, a 32:1 × 24 b area mux (≈264 LUT), and a **simpler** FSM — the keeper
 scan and valid-mask-driven dispatch both disappear. **It also strengthens the determinism
-claim to its maximum form: `K` leaves the formula entirely, so worst case = best case = 78 cycles
+claim to its maximum form: `K` leaves the formula entirely, so worst case = best case = 80 cycles
 at P=16 for every possible input.**
 
 ### This flips the Q5 / Part 1a verdict — the sorter becomes load-bearing
@@ -507,7 +513,7 @@ fastest structure needs a sort.
 
 ### Even restructured, the claim must name the processor class
 
-At 0.46 µs (P=32): **~70× faster than a Cortex-M7, ~1.9× faster than a Cortex-A53, and ~2× *slower*
+At 0.48 µs (P=32): **~67× faster than a Cortex-M7, ~1.8× faster than a Cortex-A53, and ~2× *slower*
 than hand-tuned AVX2 on a 3 GHz x86** (all CPU figures estimates). A 100 MHz fabric cannot out-run a 30×-clock superscalar SIMD
 core at N=32; there is not enough parallelism available to close a 30× clock deficit. "Faster than
 *anything*" is not defensible. **"Faster than the embedded-class CPU an FPGA is actually deployed
@@ -517,17 +523,17 @@ already says ("the edge CPU").
 ### The harder problem: end-to-end, UART makes any CPU comparison unwinnable
 
 A CPU already has the boxes in its memory — the detector put them there. The FPGA needs them
-shipped: **2.70 ms at 1 Mbaud versus 0.46 µs of compute (P=32), a factor of ~5,900.** No serial link can be
+shipped: **2.70 ms at 1 Mbaud versus 0.48 µs of compute (P=32), a factor of ~5,600.** No serial link can be
 argued around. Three honest framings, in increasing strength:
 
 1. **Core-latency comparison.** Legitimate for an architecture study, provided the report states
    plainly that the UART is test harness, not datapath.
 2. **On-chip interface as future work.** Over AXI-Stream at 100 MHz / 64-bit, the 32 records land in
-   32 cycles = 0.32 µs, so end-to-end becomes 0.78 µs at P=32 and the claim survives *with* transport
+   32 cycles = 0.32 µs, so end-to-end becomes 0.80 µs at P=32 and the claim survives *with* transport
    included. This is where the design belongs; say so.
 3. **Same-silicon head-to-head — the bulletproof version.** Put a **MicroBlaze** on the same
-   XC7A35T, run the NMS in software on it (~124 µs), and run the accelerator beside it (0.46 µs at P=32) over
-   AXI. Same chip, same clock, same memory, no interface asymmetry: **~270× — an estimate until
+   XC7A35T, run the NMS in software on it (~124 µs), and run the accelerator beside it (0.48 µs at P=32) over
+   AXI. Same chip, same clock, same memory, no interface asymmetry: **~260× — an estimate until
    both are built and measured, then apples to apples.** It is the only version of this claim that cannot be argued with.
 
 ---
@@ -551,11 +557,12 @@ data-independent.
 
 | P | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| cycles | 1038 | 526 | 270 | 142 | **78** | 46 |
-| µs @100 MHz | 10.38 | 5.26 | 2.70 | 1.42 | **0.78** | 0.46 |
+| cycles | 1040 | 528 | 272 | 144 | **80** | 48 |
+| µs @100 MHz | 10.40 | 5.28 | 2.72 | 1.44 | **0.80** | 0.48 |
 
-At `C = 8`. An earlier revision tabulated `C = 2` (1032 … **72** … 40), which does not meet
-100 MHz.
+At `C = 8` with the 2 issue registers (`I`) the placed core needs, so the formula above gains
+`+ I`: `T = N²/P + L + I + C + 2`. An earlier revision tabulated `C = 2` and no issue registers
+(1032 … **72** … 40), which does not meet 100 MHz.
 
 *Superseded, for the report's comparison:* the keeper-serial design was
 `T_worst = N²/P + N(L+3) + C + 1 = Θ(N²/P + N·L)`, giving 291 cycles at P=16 with a data-dependent
@@ -568,7 +575,7 @@ Three things follow, and all three belong in the report:
 `N²/P = N` — and that configuration costs ~73% of the device. Any claim of `O(N)` NMS must state
 `P = N` as its precondition or it is false.
 
-**2. Determinism is now absolute, not merely bounded.** Every batch takes exactly 78 cycles at P=16,
+**2. Determinism is now absolute, not merely bounded.** Every batch takes exactly 80 cycles at P=16,
 whatever the data — the strongest possible form of the proposal's "highly deterministic execution"
 claim, and a genuine advantage over a CPU, whose *average* may beat this but whose worst case
 (cache misses, interrupts, scheduler) is far worse and unbounded.
@@ -581,8 +588,8 @@ it, at the cost of a 32:1 crossbar per lane and a data-dependent (non-determinis
 trade was made deliberately; say so.
 
 **3. The measured speedup is large against Python, modest against tuned C.** Part 1e has the numbers:
-**46–610× faster than Python** (measured across four cases), ~40× faster than a Cortex-M7,
-at rough parity with a Cortex-A53, and ~3× slower than hand-tuned AVX2 on a 3 GHz x86 (CPU figures
+**45–600× faster than Python** (measured across four cases), ~40× faster than a Cortex-M7,
+at rough parity with a Cortex-A53, and ~3.5× slower than hand-tuned AVX2 on a 3 GHz x86 (CPU figures
 estimated, at P=16). State the
 processor class every time the word "faster" appears; an unqualified "faster than any processor" is
 false and is the one claim an examiner will test.
@@ -649,8 +656,8 @@ hiding it.
 | 4 | `frame_rx` FSM | Hunt for `magic`; then shift 8 bytes into a 64-bit register and write `box_store[slot]`, `slot = count/8`; then 4 bytes → `present_mask`; then `seq`, then verify the CRC-8 over bytes 2..262. **Idle timeout** (no byte for > 2 byte-times mid-frame) resets to hunting. |
 | 5 | — | On a good frame, pulse `start`. On a CRC failure, drop the frame and re-hunt — never compute on corrupt data. |
 
-**Compute** — `SORT(8) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(5) → DONE`, exactly 78
-cycles = 0.78 µs at P=16, as Part 2. Areas are computed during LOAD and cost no cycles.
+**Compute** — `SORT(8) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(7) → DONE`, exactly 80
+cycles = 0.80 µs at P=16, as Part 2 (DRAIN is `L + I + 1` with the 2 issue registers). Areas are computed during LOAD and cost no cycles.
 
 **Output path**
 
@@ -871,7 +878,7 @@ agreeing is far stronger evidence than one, and it is the real mitigation for L6
   fixed 7-bit width overflows at P ≤ 2). Instead `status = 0x03` is raised if the lanes' `valid_out`
   ever disagrees with the FSM's own tag pipeline, or if fewer than N ranks have resolved at `DONE`
   ([fsm_design.md §7](fsm_design.md)).
-- **Back-to-back frames**: compute (0.78 µs) finishes ~3,460× before the next frame can arrive
+- **Back-to-back frames**: compute (0.80 µs) finishes ~3,400× before the next frame can arrive
   (2.70 ms), so a single buffer plus a `busy` flag suffices; frames arriving while busy are dropped
   and reported via `status = 0x02`. Double-buffering is not worth 2,048 flip-flops here.
 
@@ -900,7 +907,7 @@ the area mux is counted properly, and one fewer module to verify.
 
 Threshold is a fixed generic (`T_INT=128`), so there is no control path. The `T_INT×U` multiply was
 expected to fold into shifts and **did not** — Vivado spends a second DSP on it (measured at C1).
-At P=32: ≈15,300 LUT (**73%**) and 65 DSP (72%) for 0.46 µs — lower than a naive scaling suggests,
+At P=32: ≈15,300 LUT (**73%**) and 65 DSP (72%) for 0.48 µs — lower than a naive scaling suggests,
 because at P=32 each lane owns exactly one column and needs no payload mux at all. Still a
 synthesis-sweep data point rather than the ship configuration: P9 flags the 32-way 48-bit broadcast
 fanout, not the LUT count, as the risk.
@@ -1069,8 +1076,9 @@ It is not bulletproof. Sorting the claims into what can actually be stood behind
    degenerate or inverted then `min(a₁,a₂) ≤ aᵢ ≤ xᵢ ≤ max(x₁,x₂)`, so `t_w ≤ 0` and the clamp gives
    `I = 0`. Hence `area = 0 ⟹ I = 0`, and otherwise `I ≤ min(area₁, area₂)`, so `U ≥ 0` always.
    Asserted live through 20,000 randomised batches (below) without firing.
-5. **Latency is exactly `N²/P + L + C + 2` = 78 cycles = 0.78 µs at P=16, C=8 — for every possible
-   input.** Not a bound: an equality. `K` does not appear in the formula (Part 1d).
+5. **Latency is exactly `N²/P + L + I + C + 2` = 80 cycles = 0.80 µs at P=16, C=8, I=2 — for every
+   possible input.** Checked as an equality on every one of 1,020 batches by `tb_nms_core`, under
+   both GHDL and xsim. Not a bound: an equality. `K` does not appear in the formula (Part 1d).
 6. **The all-pairs restructure is equivalent to sequential NMS.** Argued from the two invariants in
    Q20 and **verified over 20,000 adversarial batches — heavy ties, 8-bit-resolution scores,
    inverted and zero-area boxes — with 0 mismatches.** This is the claim the whole speedup rests on,
@@ -1167,7 +1175,7 @@ Part 2; the table is retained so the report can show they were found and closed 
 |---|---|---|---|
 | **L1** | **XOR-8 checksum was weak.** It misses any even number of bit errors in the same bit position across the payload. | ≈1/256 of random corruptions pass undetected on a 260-byte payload, and a corrupt record yields a plausible-looking wrong mask. | **CRC-8 over bytes 2..262** (≈30 LUT), giving proper burst-error detection. |
 | **L2** | **No frame sequence number.** | After a timeout, a late reply is indistinguishable from the next frame's reply, and the host silently mis-attributes results. | **1-byte `seq`**, echoed in the reply. |
-| **L3** | **`busy` drops frames silently.** | Cannot occur at 2.70 ms vs 0.78 µs — but "cannot occur" is not "guaranteed", and the host would never learn. | `status = 0x02` (busy). |
+| **L3** | **`busy` drops frames silently.** | Cannot occur at 2.70 ms vs 0.80 µs — but "cannot occur" is not "guaranteed", and the host would never learn. | `status = 0x02` (busy). |
 | **L4** | **Watchdog action undefined.** P4's counter detects a >32-iteration hang but nothing consumes the flag. | A detected fault still hangs the host. | `status = 0x03` (internal error). |
 | **L5** | **Quantise-then-sort ordering.** If the model sorted float scores and the RTL sorts u16, two floats quantising to the same integer could order differently — a mismatch with no bug in either. | Silent testbench failure at the worst possible place to debug. | Already implied ("no floats in `nms_model`"), but make it explicit: **quantisation happens at the generator boundary; the model sees integers only, and sorts them.** |
 | **L6** | **Simulation/synthesis mismatch.** Vivado could infer a latch from an incomplete `if`/`case` that GHDL simulates happily, or treat a 2008 construct differently. | Works in simulation, wrong on hardware — the classic. | Four layers, all now decided: RTL in the **VHDL-93 subset** so no 2008 gap exists; **concurrent assignments for combinational logic** so no sensitivity list can be wrong; `ghdl -a -Wsensitivity -Wall --warn-error`; **xsim as an independent second simulator at C4**; and read Vivado's synthesis warnings rather than skipping to the bitstream. |
@@ -1217,9 +1225,9 @@ it shows which claims were tested rather than assumed. **Every row is a claim th
 | "Re-scope the real-time claim" | A retreat, not an answer. The problem was one constant. | **1 Mbaud → 2.70 ms, 8.1% of frame.** Real-time holds |
 | Yosys LUT thresholds as pass/fail | Yosys is 10–30% off Vivado and can miss DSP inference entirely | Ratios only; Vivado is the authority, gated early at B5 |
 | "Fixed-length frame, the receiver is a byte counter" | One dropped byte desynchronises **permanently**; every later frame looks like an RTL bug | magic + CRC-8 + `seq` + idle timeout |
-| Keeper-serial FSM is fast enough | **128 of 259 cycles are pipeline refill** — the `L` drain paid 32 times | All-pairs restructure: **78 cycles, 3.8× better** (72 / 4.0× at the untimed `C = 2`) |
+| Keeper-serial FSM is fast enough | **128 of 259 cycles are pipeline refill** — the `L` drain paid 32 times | All-pairs restructure: **80 cycles, 3.7× better** (72 / 4.0× at the untimed `C = 2`, no issue registers) |
 | Max tree beats the sorter, so the sorter is decorative | True *only* for keeper-serial. Rank-ordered rows need the full ranking up front | **Sorter is architecturally required** |
-| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 46–610× vs Python | Claim must name the processor class |
+| "Faster than any common processor" | False vs tuned AVX2 (~0.23 µs). **Measured** 45–600× vs Python | Claim must name the processor class |
 | Suppression matrix needs 32×32 = 1,024 FF | Rows are produced and consumed in rank order 1 cycle apart | **2-row buffer, ~74 FF.** −950 FF |
 | `index_table` read once per rank | Fill reads rank `r` while resolve reads `r−1` — **two ports** | Carry `idx_r` with its row |
 | Part 1d cycle table | P=1/2/4 dropped the `(C+1)` term | 1029/517/261 → **1032/520/264** |
@@ -1241,7 +1249,7 @@ exceeds the energy the acceleration saves. (An earlier revision quoted 47 µs, 8
 slower"; those mixed a withdrawn single-batch timing with 3 Mbaud transport.)
 
 The team weighed pivoting to 3DGS, where the sort really is the bottleneck (Part 0), and **chose to
-finish NMS** (2026-09-24). The report therefore claims **core latency and determinism** — 78 cycles
+finish NMS** (2026-09-24). The report therefore claims **core latency and determinism** — 80 cycles
 for every input — and states the system-level finding above as its honest scope, with 3DGS as
 future work to which the sorter transfers unchanged.
 
@@ -1300,7 +1308,7 @@ restructuring. That is why `nms_model.py` keeps **both** algorithm forms.
   and no boundary cases, so passing it proves almost nothing.
 - **Split the sweeps by simulator cost, or someone will wait hours for nothing.** The
   20,000-batch model-vs-model equivalence sweep and the millions-of-pairs property test run **in
-  Python** (seconds). GHDL runs the ~12 curated cases plus ~1,000 random batches — 1,000 × 78 cycles
+  Python** (seconds). GHDL runs the ~12 curated cases plus ~1,000 random batches — 1,000 × 80 cycles
   is trivial to simulate, but 20,000 batches of ASCII vectors is ~11 MB of file I/O, which is where
   the time actually goes. **Large vector sets are generated on demand and gitignored**; only the
   curated cases are committed.

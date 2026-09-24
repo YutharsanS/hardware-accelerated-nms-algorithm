@@ -1066,3 +1066,71 @@ DSP writing through the 32-way area decode.
 Added to `nms_ctrl`'s 5.714 ns and the lane's 7.161 ns stage 1, the path wired directly is
 ≈ 16.8 ns. C4 therefore needs two register stages (selects, then payloads), giving
 `LANE_LATENCY = 6` and T = 80, with no change to `nms_ctrl` ([results.md](results.md) §5).
+
+---
+
+### C4 — `nms_core`: the whole compute core, integrated and placed      2026-09-24
+
+`src/pipeline/nms_core.vhd` wires `box_store` → `bitonic32` → `nms_ctrl` → 16 × `iou_lane`,
+with `ISSUE_REGS` register stages (0–2, a generic) between the FSM's issue and lane stage 1.
+To `nms_ctrl` those registers are simply more lane stages: it is instantiated with
+`LANE_LATENCY + ISSUE_REGS` and changes nothing else. The plan named the C4 top `nms_top`; that
+name is kept for D1, which wraps this core with the UART framing.
+
+**`tb_nms_core`**: nothing stubbed. It runs all 20 curated cases, then **1,000 hostile random
+batches**, back to back with no reset:
+- The random batches are a quarter with random present masks, and one in 97 all-absent. They
+  come from a new gitignored file, `models/data/random/random_batches.txt`, which is generated
+  on demand (`uv run python -m models.nms random`, rebuilt automatically by `make`). Each
+  expectation is checked against both algorithm forms as it is written.
+- Every batch is a single 32-bit mask equality, with the latency pinned from both sides.
+
+It passes at `ISSUE_REGS` = 2/1/0 (T = 80/79/78), at `PIPE_CUTS` = 2 (T = 74), at P = 32
+(T = 48) and, by hand, at P = 1 (T = 1040). P = 1 is left out of the standing sweep because it
+takes about 3.5 min on its own.
+
+#### Integration found one real defect — in a simulation check
+
+The first run stopped on `iou_lane`'s union-underflow assertion (I = 2,500, area sum 0). The
+datapath was right; the check was wrong:
+- The lanes compute every cycle, valid or not.
+- In the core, a slot's new coordinates land one edge before its new area, so for one cycle a
+  lane sees an inconsistent pair.
+- That result is never marked valid, but the assertion was not gated by the valid bit.
+
+It is now gated by stage 2's valid. `tb_iou_lane` could never show this, because it only ever
+feeds consistent pairs.
+
+#### Mutation results (integration)
+
+| mutant | outcome |
+|---|---|
+| keeper x/y fields swapped in the lane wiring | killed — `boundary` keep_mask mismatch |
+| candidate area taken from the keeper | killed — `boundary` keep_mask mismatch |
+| FSM told one stage too few (`LANE_LATENCY + ISSUE_REGS − 1`) | killed — "done after only 78 edges" |
+| payload register passes the unregistered valid | killed — **status 0x03** |
+
+The last row is the consistency check that replaced the watchdog, catching exactly the class of
+bug it was designed for.
+
+#### Second simulator
+
+`make xsim TB=tb_nms_core` runs the same RTL, testbench and vectors under Vivado xsim. It passes
+with identical totals (18,328 survivors, 260 batches with absent slots). xsim reports assertion
+errors and carries on, printing PASS anyway, so the target takes its verdict from the log. A
+mutant was run through it to confirm that the target does fail.
+
+#### Placed and routed
+
+| `ISSUE_REGS` | T | WNS | critical path |
+|---|---|---|---|
+| 0 | 78 | −4.886 ns (67.2 MHz) | `index_table` → row mux → lane stage 1, 14.9 ns |
+| 1 | 79 | +0.087 ns | sorter; lane stage 1 at +0.098 ns |
+| **2** | **80** | **+0.202 ns (102.1 MHz)** | sorter, sub-stage 10 → 12 |
+
+**Shipped: `ISSUE_REGS = 2`, T = 80 cycles = 0.80 µs.** At 12,384 LUT (59.5%), 9,616 FF and 33
+DSP, it is frozen as `ISSUE_REGS` in architecture.md, `params.py` and `nms_pkg.vhd`, and
+`LATENCY_CYCLES` is now 80.
+
+The margins are thin, and adding the UART at D1 will cost more. The remedies are listed in
+results.md §5.

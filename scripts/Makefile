@@ -45,7 +45,8 @@ RTL = src/components/nms_pkg.vhd \
       src/components/bitonic32.vhd \
       src/components/iou_lane.vhd \
       src/components/box_store.vhd \
-      src/components/nms_ctrl.vhd
+      src/components/nms_ctrl.vhd \
+      src/pipeline/nms_core.vhd
 
 # Any RTL file not named above. Adding a module means declaring where it sits in the
 # dependency order, so an omission fails the build with a message instead of being
@@ -76,6 +77,20 @@ SWEEP_tb_nms_ctrl  = -gPIPE_CUTS=8 -gPIPE_CUTS=2 -gPIPE_CUTS=0 -gP=1 -gP=32
 # box_store's candidate striping depends only on P: the shipped 16 and both extremes.
 SWEEP_tb_box_store = -gP=16 -gP=1 -gP=32
 
+# The whole core at the shipped point, with fewer issue registers (functionally identical,
+# only T changes), the old sorter default, and P = 32. P = 1 also passes, but its 1,040-cycle
+# batches make it ~3.5 min on its own, so it is left out of the standing regression -- the
+# unit testbenches already cover P = 1. Run it by hand with:
+#   make tb_nms_core SWEEP_tb_nms_core=-gP=1
+SWEEP_tb_nms_core  = -gISSUE_REGS=2 -gISSUE_REGS=1 -gISSUE_REGS=0 -gPIPE_CUTS=2 -gP=32
+
+# tb_nms_core also runs 1,000 random batches from a gitignored file, regenerated whenever
+# the model that defines the expected answers changes.
+RANDOM_BATCHES = models/data/random/random_batches.txt
+$(RANDOM_BATCHES): models/nms/vectors.py models/nms/batches.py models/nms/model.py models/nms/params.py
+	$(PYTHON) python -m models.nms random
+tb_nms_core: $(RANDOM_BATCHES)
+
 PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the
 # 267 MB .ply under models/data is not a concern). Formatting is enforced only on .py
@@ -83,7 +98,7 @@ PYTHON = uv run
 PYLINT_SRC   = models
 PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs)
 
-.PHONY: all test lint clean help $(TB_ALL) tb_hello synth
+.PHONY: all test lint clean help $(TB_ALL) tb_hello synth xsim
 .DEFAULT_GOAL := help
 
 help:
@@ -149,6 +164,25 @@ tb_hello: | $(WORKDIR)
 # is how B3.2 sweeps PIPE_CUTS.
 #
 #   make synth MOD=bitonic32 PERIOD=20 GENERICS="PIPE_CUTS=0"
+# Second-opinion simulation under Vivado xsim (docs/plan.md L6): two independent simulators
+# agreeing is far stronger evidence than one. Same RTL, same testbench, same vectors. It runs
+# in build/xsim, with a `models` symlink so the testbenches' repository-relative vector
+# paths resolve unchanged. xsim reports assertion errors and carries on rather than
+# stopping, so the verdict comes from the log: no "Error:" line, and a PASS line.
+#   make xsim TB=tb_nms_core [XGENERICS="-generic_top ISSUE_REGS=1"]
+XSIM_DIR = $(WORKDIR)/xsim
+xsim: $(RANDOM_BATCHES)
+	@test -n "$(TB)" || { echo "usage: make xsim TB=<testbench> [XGENERICS=...]"; exit 1; }
+	@command -v xvhdl >/dev/null 2>&1 || { \
+	  echo "xvhdl not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
+	@mkdir -p $(XSIM_DIR) && ln -sfn ../../models $(XSIM_DIR)/models
+	cd $(XSIM_DIR) && xvhdl -2008 -nolog $(addprefix ../../,$(RTL)) ../../test/$(TB).vhd >/dev/null
+	cd $(XSIM_DIR) && xelab -nolog -debug off $(XGENERICS) $(TB) -s $(TB)_sim >/dev/null
+	cd $(XSIM_DIR) && xsim $(TB)_sim -R -nolog | tee $(TB).log | grep -E "Note: (PASS|tb_)|Error:"
+	@! grep -q "Error:" $(XSIM_DIR)/$(TB).log || { echo "xsim: $(TB) reported errors"; exit 1; }
+	@grep -q "Note: PASS" $(XSIM_DIR)/$(TB).log || { echo "xsim: $(TB) did not reach PASS"; exit 1; }
+	@echo "xsim: $(TB) PASS"
+
 synth:
 	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"]"; exit 1; }
 	@command -v vivado >/dev/null 2>&1 || { \

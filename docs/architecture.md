@@ -207,6 +207,12 @@ and it also removes a divide-by-zero that a float formulation would hit.
 **Lane pipeline, L = 4:** (1) min/max, subtract, clamp; (2) `I = w·h` (DSP); (3) `U`, `RHS`, `LHS`;
 (4) 33-bit compare → `suppress`.
 
+**Issue registers, I = 2.** In `nms_core`, two register stages sit between the FSM's issue and
+lane stage 1: one after the row/column selects, one after the payload muxes. Wired directly,
+that path (`index_table` read → 32:1 × 72 b row mux → lane stage 1) measures 14.9 ns in the
+placed core, 67 MHz. With I = 2 the core closes 100 MHz ([results.md](results.md) §5). To the
+FSM these are simply more lane stages.
+
 **FSM:** `IDLE → LOAD → SORT(C) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L+1) → DONE`, with
 `LOAD` owned by `frame_rx`. The cycle-level design, including why SORT costs `C + 1` (the
 `index_table` register), is in [fsm_design.md](fsm_design.md).
@@ -214,11 +220,12 @@ and it also removes a divide-by-zero that a float formulation would hit.
 **Latency is an equality, not a bound:**
 
 ```
-T = N²/P + L + C + 2
+T = N²/P + L + I + C + 2
 ```
 
-At P = 16 and C = 8 that is **78 cycles = 0.78 µs** on the 100 MHz clock. (Earlier revisions
-said 72 cycles; that figure assumed `PIPE_CUTS = 2`, which does not meet 100 MHz.) There is no
+At P = 16, L = 4, I = 2 and C = 8 that is **80 cycles = 0.80 µs** on the 100 MHz clock.
+(Earlier revisions said 72 cycles, which assumed `PIPE_CUTS = 2` and no issue registers.
+Neither meets 100 MHz; see [results.md](results.md) §5.) There is no
 data-dependent term, so worst case = best case for every possible input. That is the
 "deterministic execution" property, and it is the claim that actually holds.
 
@@ -263,11 +270,11 @@ supersedes this table wherever a block has actually been built):
 ## 11. Scope limits, stated rather than left unmentioned
 
 * **Single class.** Real NMS runs per class; this record carries no class ID. A 4-bit class carved
-  from the score would give 16 classes and re-run the FSM per class in 16 × 0.78 µs = 12.5 µs, still
+  from the score would give 16 classes and re-run the FSM per class in 16 × 0.80 µs = 12.8 µs, still
   trivial against 2.70 ms of link time — but that is not built.
 * **N = 32 fixed.** The combinational sorter is `Θ(N log²N)`: N = 64 needs 672 CAS ≈ 20,160 LUT and
   does **not** fit this device. A folded sorter is the path past that.
-* **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.78 µs of
+* **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.80 µs of
   compute. The report must present **core latency** and determinism, not a system speedup;
   end-to-end, doing NMS on the host CPU is faster. See `docs/build_log.md` and the plan's Part 1e.
 

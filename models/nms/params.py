@@ -92,6 +92,12 @@ the lowest swept value that meets 100 MHz after place and route (119.2 MHz, resu
 section 2); 2 reaches only 53.9 MHz. 0 is combinational; 15 is one cut per sub-stage, the
 upper bound."""
 
+ISSUE_REGS = 2
+"""Register stages between nms_ctrl's issue and lane stage 1 inside nms_core: one after the
+row/column selects, one after the payload muxes. Without them that path measures 14.9 ns in
+the placed core (67 MHz); with 2 the core closes 100 MHz (results.md section 5). To nms_ctrl
+they are extra lane stages, so they add to the latency like LANE_LATENCY does."""
+
 CLOCK_HZ = 100_000_000
 
 # --- wire protocol -----------------------------------------------------------------
@@ -130,7 +136,7 @@ def latency_cycles(p: int = P_DEFAULT, *, n: int = N) -> int:
     Returns:
         Cycles from ``SORT`` to ``DONE``.
     """
-    return n * n // p + LANE_LATENCY + PIPE_CUTS + 2
+    return n * n // p + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2
 
 
 def quantise_score(confidence: float) -> int:
@@ -211,7 +217,7 @@ def validate() -> list[str]:
     want("CAS_COUNT", CAS_COUNT, 240)
     want("PIPE_CUTS fits the network", PIPE_CUTS <= SORT_SUBSTAGES, True)
     want("P_DEFAULT divides N", N % P_DEFAULT, 0)
-    want("latency at P_DEFAULT", latency_cycles(), 78)
+    want("latency at P_DEFAULT", latency_cycles(), 80)
     want("CRC-8 check value", crc8(b"123456789"), 0xF4)
     want("FRAME_BYTES_IN", FRAME_BYTES_IN, 264)
     want("REPLY_BYTES", REPLY_BYTES, 6)
@@ -245,8 +251,8 @@ def summary() -> str:
         ),
         ("KEY_W", KEY_W),
         (
-            "P_DEFAULT / LANE_LATENCY / PIPE_CUTS",
-            f"{P_DEFAULT} / {LANE_LATENCY} / {PIPE_CUTS}",
+            "P_DEFAULT / LANE_LATENCY / ISSUE_REGS / PIPE_CUTS",
+            f"{P_DEFAULT} / {LANE_LATENCY} / {ISSUE_REGS} / {PIPE_CUTS}",
         ),
         (
             "latency at P_DEFAULT",

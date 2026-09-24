@@ -81,6 +81,18 @@ def test_keys_and_order_files_match_the_model(name: str, written: Path) -> None:
     assert sorted(order) == list(range(p.N))
 
 
+def test_random_batches_round_trip_and_match_both_forms(tmp_path: Path) -> None:
+    path = vectors.write_random_batches(120, seed=5, outdir=tmp_path)
+    read = vectors.read_random_batches(path)
+    assert len(read) == 120
+    masks = {mask for _, mask, _ in read}
+    assert 0 in masks and (1 << p.N) - 1 in masks and len(masks) > 3
+    for boxes, mask, keep in read:
+        assert len(boxes) == p.N
+        assert keep == model.nms_sequential(boxes, mask)
+        assert keep & ~mask == 0
+
+
 @pytest.mark.parametrize("name", sorted(vectors.all_cases()))
 def test_areas_file_matches_the_model(name: str, written: Path) -> None:
     case = vectors.read_case(name, written)

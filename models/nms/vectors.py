@@ -37,6 +37,7 @@ would cancel out instead of failing.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,14 @@ from models.nms import batches, model
 from models.nms import params as p
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "vectors"
+
+RANDOM_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "random"
+"""Where the on-demand random batch file goes. Gitignored: it is ~40 kB per 1,000 batches
+and fully reproducible from its seed, so committing it would only add churn."""
+
+RANDOM_BATCHES = "random_batches.txt"
+RANDOM_BATCH_COUNT = 1_000
+RANDOM_BATCH_SEED = 2026
 
 MANIFEST = "cases.txt"
 """Lists every case name, one per line, for the VHDL testbenches to iterate."""
@@ -387,6 +396,66 @@ def read_keys(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:
         The 21-bit key for each slot, in input order.
     """
     return [int(v, 16) for v in (outdir / f"{name}.keys").read_text().split()]
+
+
+def write_random_batches(
+    count: int = RANDOM_BATCH_COUNT,
+    *,
+    seed: int = RANDOM_BATCH_SEED,
+    outdir: Path = RANDOM_DIR,
+) -> Path:
+    """Write hostile random batches for the whole-core testbench.
+
+    The file opens with one line giving the batch count. Each batch is then 34 lines: 32
+    records (16 hex), the ``present_mask`` (8 hex) and the expected ``keep_mask`` (8 hex).
+    Three batches in four have every slot present; the rest draw a random mask, with an
+    all-absent batch forced every 97th, so absent slots are exercised throughout the file.
+
+    Args:
+        count: Number of batches.
+        seed: Seed for both the geometry and the present masks.
+        outdir: Destination directory, created if absent.
+
+    Returns:
+        The path written.
+    """
+    rng = random.Random(seed)
+    lines = [str(count)]
+    for i, boxes in enumerate(batches.hostile_stream(count, seed=seed)):
+        if i % 97 == 96:
+            mask = 0
+        elif i % 4 == 3:
+            mask = rng.getrandbits(p.N)
+        else:
+            mask = (1 << p.N) - 1
+        keep = model.nms_allpairs(boxes, mask)
+        # The sequential loop is the authority on what NMS means; a batch where the two
+        # forms disagree must never reach the RTL as an expectation.
+        assert keep == model.nms_sequential(boxes, mask), f"batch {i}: forms disagree"
+        lines.extend(_hex(model.pack_record(b), RECORD_HEX) for b in boxes)
+        lines.append(_hex(mask, MASK_HEX))
+        lines.append(_hex(keep, MASK_HEX))
+    outdir.mkdir(parents=True, exist_ok=True)
+    return _write(outdir / RANDOM_BATCHES, lines)
+
+
+def read_random_batches(path: Path) -> list[tuple[list[model.Box], int, int]]:
+    """Read a file written by :func:`write_random_batches`.
+
+    Args:
+        path: The file.
+
+    Returns:
+        ``(boxes, present_mask, keep_mask)`` per batch.
+    """
+    lines = path.read_text().split()
+    count = int(lines[0])
+    out = []
+    for i in range(count):
+        base = 1 + i * (p.N + 2)
+        boxes = [model.unpack_record(int(v, 16)) for v in lines[base : base + p.N]]
+        out.append((boxes, int(lines[base + p.N], 16), int(lines[base + p.N + 1], 16)))
+    return out
 
 
 def read_areas(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:

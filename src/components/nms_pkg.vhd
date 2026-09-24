@@ -103,9 +103,15 @@ package nms_pkg is
     -- one cut per sub-stage is the finest possible, so this is bounded by SORT_SUBSTAGES.
     constant PIPE_CUTS : natural := 8;
 
-    -- Exact batch latency at P_DEFAULT. An equality, not a bound: no term depends on the
-    -- data, so worst case equals best case for every possible input.
-    constant LATENCY_CYCLES : natural := N * N / P_DEFAULT + LANE_LATENCY + PIPE_CUTS + 2;
+    -- Register stages between nms_ctrl's issue and lane stage 1 in nms_core: after the
+    -- selects, then after the payload muxes. Without them that path is 14.9 ns in the
+    -- placed core; with 2 it closes 100 MHz (docs/results.md section 5).
+    constant ISSUE_REGS : natural := 2;
+
+    -- Exact batch latency of nms_core at P_DEFAULT. An equality, not a bound: no term
+    -- depends on the data, so worst case equals best case for every possible input.
+    constant LATENCY_CYCLES : natural :=
+        N * N / P_DEFAULT + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2;
 
     -- --- wire protocol -------------------------------------------------------------
 

@@ -52,9 +52,9 @@ def test_union_cannot_underflow_for_degenerate_boxes() -> None:
 
 
 def test_latency_is_data_independent_and_scales_as_expected() -> None:
-    assert p.latency_cycles(16) == 78
+    assert p.latency_cycles(16) == 80
     # halving the lanes must double only the N^2/P term, not the fixed overhead
-    fixed = p.LANE_LATENCY + p.PIPE_CUTS + 2
+    fixed = p.LANE_LATENCY + p.ISSUE_REGS + p.PIPE_CUTS + 2
     assert p.latency_cycles(8) - fixed == 2 * (p.latency_cycles(16) - fixed)
     for lanes in (1, 2, 4, 8, 16, 32):
         assert p.N % lanes == 0

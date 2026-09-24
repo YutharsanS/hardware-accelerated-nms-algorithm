@@ -36,6 +36,7 @@ Reports for the last run of each module land in `build/synth/<module>/`.
 | `iou_lane` (one lane) | 109 | 0.5% | 101 | 30 | 2 | 7.161 ns | 139.6 MHz *(170.1)* |
 | `nms_ctrl` (P = 16, C = 8) | 382 | 1.8% | 300 | 0 | 0 | 5.714 ns | 175.0 MHz |
 | `box_store` (P = 16) | 1,602 | 7.7% | 2,822 | 10 | 1 | 7.355 ns | 136.0 MHz |
+| **`nms_core`** (P = 16, C = 8, I = 2) — **whole compute core** | **12,384** | **59.5%** | **9,616** | 1,210 | **33** | 9.798 ns | **102.1 MHz** |
 
 `iou_lane` at shipped generics (`T_INT = 128`, `K_SHIFT = 8`).
 
@@ -161,13 +162,34 @@ from measured segments, each timed with its ports constrained:
 | `iou_lane`: stage 1, ports → DSP | 7.161 ns |
 | **wired directly** | **≈ 16.8 ns against 10 ns** |
 
-**So C4 needs register stages between the selects and lane stage 1.** Registering the selects
-(with `issue_valid`), then the muxed keeper and candidate payloads, gives segments of about 5.7,
-4–5 and 7.2 ns. That is `LANE_LATENCY = 6` and **T = 80 cycles (0.80 µs)**. `nms_ctrl` absorbs it
-through its generic with no logic change: its tag pipe and DRAIN are built from `LANE_LATENCY`,
-and its lane-latency consistency check verifies the result. A single stage (T = 79) would leave
-the first segment at about 9.7 ns, too marginal to plan on. C4 confirms the choice on the real
-wiring.
+That sum predicted that C4 would need register stages. **C4 measured it on the placed core**, with
+`ISSUE_REGS` as a generic of `nms_core`:
+
+| `ISSUE_REGS` | T | WNS | Fmax | lane stage 1 slack | sorter slack | LUT | FF |
+|---|---|---|---|---|---|---|---|
+| 0 | 78 | **−4.886 ns** | 67.2 MHz | −4.886 ns (`index_table` → lane, 14.9 ns) | −1.202 ns | — | — |
+| 1 | 79 | +0.087 ns | 100.9 MHz | +0.098 ns (from the payload register) | +0.087 ns | 12,402 | 9,599 |
+| **2** | **80** | **+0.202 ns** | **102.1 MHz** | ≥ +0.202 ns | +0.202 ns | 12,384 | 9,616 |
+
+Four findings:
+
+1. **Registers are required.** With none, the path runs 14.9 ns and the core runs at 67 MHz. The
+   16.8 ns sum of segments was pessimistic, because the tool optimises across block boundaries
+   once the blocks are placed together, but the conclusion stands.
+2. **`ISSUE_REGS = 2` ships** ([architecture.md](architecture.md) §9). **T = 80 cycles =
+   0.80 µs.** `nms_ctrl` absorbed the extra stages through its `LANE_LATENCY` generic with no
+   logic change.
+3. **The critical path moved to the sorter.** In context, `bitonic32`'s sub-stage 10 → 12
+   segment takes 9.8 ns, against 8.57 ns alone. That is routing pressure at 59.5% LUT.
+4. **Both margins are thin.** The sorter has +0.202 ns and the payload register → lane stage 1
+   path has about +0.1 ns (that path now drives 16 lanes' worth of fan-out). Adding the UART at
+   D1 will add routing pressure. Known remedies, in order of cost:
+   - re-placing the sorter cuts through `CUT_AFTER`, or `PIPE_CUTS = 9`, which is +1 cycle;
+   - duplicating the payload register to split the 16-lane fan-out;
+   - a third issue stage, which is +1 cycle.
+
+**Area came in as projected**: 12,384 LUT against the §4 projection of about 11,550 plus the
+issue registers, and exactly 33 DSPs.
 
 The `PIPE_CUTS` sweep in §2 predates the method correction. Its internal-segment figures stand,
 but the table has not been re-run with ports constrained.
@@ -194,7 +216,8 @@ them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 ch
 
 ## 6. Not yet measured
 
-`frame_rx` / `frame_tx` are not written, so their rows above remain estimates. The FSM, row
+`frame_rx` / `frame_tx` are not written, so their rows above remain estimates. The compute core
+itself is now measured as a whole (`nms_core`, §1 and §5). The FSM, row
 buffer and resolve are built and measured as `nms_ctrl`; the payload and area registers, the
 row-source mux and the candidate muxes are built and measured as `box_store` (§1). The integrated design has never been synthesised as a
 whole, and the per-module figures here exclude inter-block routing.

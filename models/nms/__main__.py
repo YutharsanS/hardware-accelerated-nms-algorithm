@@ -3,6 +3,7 @@
 uv run python -m models.nms            # write vectors, then summarise
 uv run python -m models.nms params     # frozen constants only
 uv run python -m models.nms vectors    # write vectors only
+uv run python -m models.nms random     # write the gitignored random batches for tb_nms_core
 """
 
 from __future__ import annotations
@@ -51,8 +52,11 @@ def main(argv: list[str]) -> int:
         print()
     if action in {"all", "vectors"}:
         _write_vectors()
-    if action not in {"all", "params", "vectors"}:
-        print(f"unknown action {action!r}; expected params, vectors or all")
+    if action == "random":
+        path = vectors.write_random_batches()
+        print(f"wrote {vectors.RANDOM_BATCH_COUNT} random batches -> {path}")
+    if action not in {"all", "params", "vectors", "random"}:
+        print(f"unknown action {action!r}; expected params, vectors, random or all")
         return 2
     return 0
 
