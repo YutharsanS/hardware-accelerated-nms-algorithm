@@ -11,6 +11,9 @@
 #   make lint            ruff check + format check on the Python models
 #   make synth MOD=cas   Vivado out-of-context synthesis + implementation of one module
 #   make impl            Vivado implementation of nms_top on the real pins, plus a bitstream
+#   make program         load that bitstream onto a connected Basys 3 over JTAG
+#   make host            talk to the programmed board: --selftest by default
+#                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
 #   make xsim TB=tb_x    the same testbench under Vivado xsim, as a second simulator
 #   make clean           remove build artefacts
 #
@@ -127,11 +130,11 @@ PYTHON = uv run
 PYLINT_SRC   = models
 PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs)
 
-.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl
+.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host
 .DEFAULT_GOAL := help
 
 help:
-	@echo "targets: test | test-full | lint | tb_hello | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | xsim TB=<tb> | clean"
+	@echo "targets: test | test-full | lint | tb_hello | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | xsim TB=<tb> | clean"
 
 $(WORKDIR):
 	@mkdir -p $(WORKDIR)
@@ -220,6 +223,25 @@ impl:
 	@command -v vivado >/dev/null 2>&1 || { \
 	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
 	vivado -mode batch -nolog -nojournal -source scripts/impl.tcl -tclargs $(GENERICS)
+
+# Load build/impl/nms_top.bit onto a connected Basys 3 over JTAG (volatile: lost at power-off).
+# Then talk to it with:  uv run python -m models.nms.host --selftest
+program:
+	@command -v vivado >/dev/null 2>&1 || { \
+	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
+	vivado -mode batch -nolog -nojournal -source scripts/program.tcl -tclargs $(BIT)
+
+# Talk to the programmed board through models/nms/host.py. Runs --selftest unless ARGS says
+# otherwise. `make` fails whenever the host does; for the host's own exit codes (1 failed,
+# 2 port unopenable) run `uv run python -m models.nms.host` directly.
+#   make host
+#   make host ARGS="--crc-test --random 1000"
+#   make host ARGS="--latency 500 --leave-latency-timer"     # at the 16 ms FTDI default
+#   make host PORT=/dev/serial/by-id/<...-if01-port0>
+PORT ?= /dev/ttyUSB1
+ARGS ?= --selftest
+host:
+	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
 
 synth:
 	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"]"; exit 1; }

@@ -41,7 +41,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from models.nms import batches, model
+from models.nms import batches, model, wire
 from models.nms import params as p
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "vectors"
@@ -587,12 +587,10 @@ def build_frame(case: Case, seq: int) -> tuple[bytes, bytes]:
     Returns:
         ``(frame, reply)``: 264 and 6 bytes, every field MSB first (architecture.md section 3).
     """
-    body = b"".join(
-        model.pack_record(b).to_bytes(p.RECORD_BYTES, "big") for b in case.boxes
-    )
-    body += case.present_mask.to_bytes(p.N // 8, "big") + bytes([seq])
-    frame = bytes(p.MAGIC) + body + bytes([p.crc8(body)])
-    reply = bytes([p.STATUS_OK, seq]) + case.keep_mask.to_bytes(p.N // 8, "big")
+    # The same encoder the live host uses (models/nms/wire.py), so the frames the
+    # testbenches were verified against are byte-for-byte the frames sent to the board.
+    frame = wire.encode_frame(case.boxes, case.present_mask, seq)
+    reply = wire.encode_reply(p.STATUS_OK, seq, case.keep_mask)
     return frame, reply
 
 

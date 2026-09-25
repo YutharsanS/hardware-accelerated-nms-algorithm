@@ -46,7 +46,9 @@ compute block is verified and measured ([results.md](results.md)). They are inte
 
 D1 is done too. The UART, `frame_rx` / `frame_tx` and the board top `nms_top` are verified at
 the pins. The full design meets 100 MHz on the real part (+0.200 ns) and a bitstream is built.
-Next is D3, the host script, and the first run on a Basys 3. See the Part 3 roadmap.
+D3's host program is written (`models/nms/host.py`, with `make program`), but not yet run on
+a board. Next is the first hardware run: `make program`, then `--selftest`. See the Part 3
+roadmap.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
 `get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,
@@ -1009,7 +1011,7 @@ simulators are worth the setup cost, per L6 — plus a
 determinism claim, checked rather than asserted · `D1` UART rx/tx + byte packer +
 `deployment/basys3.xdc` — **note Digilent board files are not installed and 2026.1 is new enough that they may not exist for it; target the raw part `xc7a35tcpg236-1` and hand-write the XDC from Digilent's Basys 3 master constraints** (clock W5, `RsRx` B18, `RsTx` A18, BTNC U18 — confirm each against the master file) · `D2`
 Vivado synth/impl for utilisation, Fmax and the P-sweep curve, then bitstream · `D3`
-`scripts/host_nms.py` (1 Mbaud, `latency_timer=1`, read timeout, frame builder from the Part 2
+`models/nms/host.py`, not the originally planned `scripts/host_nms.py`, so it can import the shared frame encoder and sits inside lint and CI (1 Mbaud, `latency_timer=1`, read timeout, frame builder from the Part 2
 sanitisation contract) + `scripts/Makefile`.
 
 **`D4` — detector front-end, later.** Staged per the user's decision: the board is validated with
