@@ -922,3 +922,378 @@ the FSM and UART. **`P = 16` is no longer provisional.**
 The DSP target remains worth recovering — at 1 DSP per lane the budget halves to 16 — but it
 is an optimisation with headroom behind it, not a blocker. Forcing the fold is the next
 candidate, and it does not change any interface.
+
+---
+
+### M2 — port paths were never timed; re-measured                     2026-09-24
+
+A review of the `nms_ctrl` design found that `scripts/synth.tcl` set only `create_clock`. With
+no `set_input_delay` / `set_output_delay`, Vivado treats input-port → register and register →
+output-port paths as *unconstrained*, and leaves them out of the WNS the script reports. Every
+clocked figure before this entry was therefore internal-segment only:
+
+- **`iou_lane`'s whole stage 1** (min/max, subtract, clamp) sits between the ports and the `s1_*`
+  registers, so it was never timed.
+- **`bitonic32`'s first and last segments** were never timed.
+
+The script now constrains every data port with a zero delay against `clk`, modelling each
+neighbour as a register at the boundary. Re-measured:
+
+| module | before | after | critical path now |
+|---|---|---|---|
+| `iou_lane` | 170.1 MHz | **139.6 MHz**, WNS +2.839 ns | port `k_a` → DSP reset pin (stage 1; the clamp was folded into the multiplier's reset) |
+| `bitonic32` (`PIPE_CUTS = 8`) | 119.2 MHz | **116.7 MHz**, WNS +1.434 ns | internal, after sub-stage 10 → after 12 (placement variation) |
+
+Both still clear 100 MHz. The finding that matters is the lane: with 2.84 ns left, the
+integration path `index_table` → 32:1 × 72 b row-source mux → lane stage 1 is tight. It cannot
+be measured until C4 wires the mux. If it misses, a datapath issue register is one more lane
+stage, which `nms_ctrl` absorbs through `LANE_LATENCY` (T 78 → 79) with no logic change.
+
+---
+
+### C3 — `nms_ctrl`, the all-pairs control FSM                          2026-09-24
+
+Built to [fsm_design.md](fsm_design.md), which was reviewed first. The review added the explicit
+start/busy rule for `frame_rx` and illegal-state recovery. `src/components/nms_ctrl.vhd`, one
+clocked process, VHDL-93:
+
+`IDLE → SORT(C) → FILL(N·G) → DRAIN(L+1) → DONE → IDLE`, with resolve driven by a valid bit
+that travels with the data rather than by the state register.
+
+**`tb_nms_ctrl`** drives the real `bitonic32` and replays the lanes from `.trace`. It checks:
+
+- the final mask;
+- `keep_mask` and `valid_mask` after **every** resolve edge (via a VHDL-2008 external name,
+  which GHDL 4.1 accepts, so no debug port was needed);
+- latency from both sides;
+- the issue schedule, in the stub.
+
+It runs over all 20 cases back to back, then four directed cases: start during FILL, rst during
+FILL, a stub one cycle slow (status `0x03`), and recovery after it.
+
+**Passes at every sweep point:**
+
+| configuration | T |
+|---|---|
+| `PIPE_CUTS` = 8 | 78 |
+| `PIPE_CUTS` = 2 | 72 |
+| `PIPE_CUTS` = 0 | 70 |
+| P = 1 | 1038 |
+| P = 32 | 46 |
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| `index_table(r)` read unreversed | killed — stub: "issue 0: row source is slot 31, rank 0 is slot 0" |
+| SORT waits `C − 1` | killed — stale `index_table`, same stub assertion |
+| DRAIN lasts `L`, not `L + 1` | killed — "done after only 76 edges; faster than T = 78" |
+| row applied without the `kept` test | killed — `valid_mask` trace mismatch at rank 1 |
+| column groups swapped in the row merge | killed — `valid_mask` trace mismatch at rank 0 |
+| lane-latency consistency check disabled | killed — "mistimed lanes went undetected" |
+| `kept` reads the next row's index | killed — `keep_mask` trace mismatch at rank 18 of `all_equal` |
+| resolve does not clear `valid_mask(idx_r)` when not kept | **survived** |
+
+**The survivor is an equivalent mutant, not a blind spot.** `kept` *is* `valid_mask(idx_r)`,
+so when a box is not kept its own bit is already 0, and clearing it changes nothing. The
+"always clear `valid_mask(idx_r)`" in plan.md's resolve step is redundant as a matter of logic.
+When the box is kept it is redundant a second time, because every row carries its own diagonal
+bit. It is kept in the RTL as cheap insurance against a lane that ever fails to suppress itself.
+The kept-index mutant replaced it as the check on that part of resolve. Note that it was caught
+only mid-batch, at rank 18: the per-rank trace check was doing work the final mask alone could
+not.
+
+#### Measured
+
+| LUT | FF | DSP | latches | Fmax |
+|---|---|---|---|---|
+| 382 (1.8%) | 300 | 0 | 0 | 175.0 MHz, WNS +4.286 ns |
+
+The critical path is `cnt` → `row_src`, the `index_table` read. In the integrated design that
+path continues into the row-source mux and lane stage 1, which is the C4 risk recorded in M2.
+
+---
+
+### C2 — `box_store`, the payload and area registers                   2026-09-24
+
+`src/components/box_store.vhd`: 32 × 64 b records and 32 × 24 b areas, all in registers, with
+three read sides:
+
+- the 21-bit sort keys (`score & not index`) for `bitonic32`;
+- the row-source record and area, selected by `row_src`;
+- the P lane candidates, lane `j` reading slot `j + col_grp·P`.
+
+The areas are computed on write by one shared multiplier (clamp, then multiply) and land one
+edge after their record. `settled` is low while an area is in flight.
+
+**Vector set:** `models/nms/vectors.py` now also writes `<case>.areas`, the model's clamped area
+per slot. `test_vectors` checks it against `model.box_area` and against the committed copy. The
+testbench reads it rather than computing areas, so it cannot share a clamp mistake with the RTL.
+
+**`tb_box_store`** writes every case back to back (so each case overwrites the last), in a
+scrambled slot order (stride 7). Even cases write on consecutive cycles and odd cases with idle
+gaps. It pins the area latency from both sides and checks every key, every `row_src` and every
+column group. It passes at P = 16, 1 and 32, with the latency pinned in 18 of 20 cases.
+
+#### Mutation results
+
+| mutant | outcome |
+|---|---|
+| width clamp removed | killed — `degenerate`: "row_src 4 area 242760, model says 0" |
+| area written to the undelayed `waddr` | killed — back-to-back writes land in the wrong slot |
+| sort key index not inverted | killed — "key 0 = 960000, model says 960031" |
+| candidate striping `j·G + g` instead of `j + g·P` | killed — **at P = 16 only** |
+| `settled` ignores the pipeline | killed — "settled high with an area still in flight" |
+| height computed from `x` | killed — `all_survive` area mismatch |
+| width clamp uses `>=` | **survived — equivalent**: at `a = x` both give width 0 |
+
+The striping mutant is worth noting. At P = 1 and P = 32 the two formulas coincide, because
+there is only one lane or only one column group, so only the P = 16 sweep point can
+distinguish them. That is a concrete reason the sweep includes the shipped configuration and
+not just the extremes.
+
+#### Measured
+
+| LUT | FF | DSP | latches | Fmax |
+|---|---|---|---|---|
+| 1,602 (7.7%) | 2,822 | 1 | 0 | 136.0 MHz, WNS +2.645 ns |
+
+2,822 FF is exact: 2,048 payload bits, 768 area bits and 6 pipeline bits. The single DSP is the
+shared area multiplier, with both operand registers absorbed into it. The critical path is that
+DSP writing through the 32-way area decode.
+
+**The row mux answers the open C4 question.** Timed alone, `row_src` → `row_rec` is 3.951 ns.
+Added to `nms_ctrl`'s 5.714 ns and the lane's 7.161 ns stage 1, the path wired directly is
+≈ 16.8 ns. C4 therefore needs two register stages (selects, then payloads), giving
+`LANE_LATENCY = 6` and T = 80, with no change to `nms_ctrl` ([results.md](results.md) §5).
+
+---
+
+### C4 — `nms_core`: the whole compute core, integrated and placed      2026-09-24
+
+`src/pipeline/nms_core.vhd` wires `box_store` → `bitonic32` → `nms_ctrl` → 16 × `iou_lane`,
+with `ISSUE_REGS` register stages (0–2, a generic) between the FSM's issue and lane stage 1.
+To `nms_ctrl` those registers are simply more lane stages: it is instantiated with
+`LANE_LATENCY + ISSUE_REGS` and changes nothing else. The plan named the C4 top `nms_top`; that
+name is kept for D1, which wraps this core with the UART framing.
+
+**`tb_nms_core`**: nothing stubbed. It runs all 20 curated cases, then **1,000 hostile random
+batches**, back to back with no reset:
+- The random batches are a quarter with random present masks, and one in 97 all-absent. They
+  come from a new gitignored file, `models/data/random/random_batches.txt`, which is generated
+  on demand (`uv run python -m models.nms random`, rebuilt automatically by `make`). Each
+  expectation is checked against both algorithm forms as it is written.
+- Every batch is a single 32-bit mask equality, with the latency pinned from both sides.
+
+It passes at `ISSUE_REGS` = 2/1/0 (T = 80/79/78), at `PIPE_CUTS` = 2 (T = 74), at P = 32
+(T = 48) and, by hand, at P = 1 (T = 1040). P = 1 is left out of the standing sweep because it
+takes about 3.5 min on its own.
+
+#### Integration found one real defect — in a simulation check
+
+The first run stopped on `iou_lane`'s union-underflow assertion (I = 2,500, area sum 0). The
+datapath was right; the check was wrong:
+- The lanes compute every cycle, valid or not.
+- In the core, a slot's new coordinates land one edge before its new area, so for one cycle a
+  lane sees an inconsistent pair.
+- That result is never marked valid, but the assertion was not gated by the valid bit.
+
+It is now gated by stage 2's valid. `tb_iou_lane` could never show this, because it only ever
+feeds consistent pairs.
+
+#### Mutation results (integration)
+
+| mutant | outcome |
+|---|---|
+| keeper x/y fields swapped in the lane wiring | killed — `boundary` keep_mask mismatch |
+| candidate area taken from the keeper | killed — `boundary` keep_mask mismatch |
+| FSM told one stage too few (`LANE_LATENCY + ISSUE_REGS − 1`) | killed — "done after only 78 edges" |
+| payload register passes the unregistered valid | killed — **status 0x03** |
+
+The last row is the consistency check that replaced the watchdog, catching exactly the class of
+bug it was designed for.
+
+#### Second simulator
+
+`make xsim TB=tb_nms_core` runs the same RTL, testbench and vectors under Vivado xsim. It passes
+with identical totals (18,328 survivors, 260 batches with absent slots). xsim reports assertion
+errors and carries on, printing PASS anyway, so the target takes its verdict from the log. A
+mutant was run through it to confirm that the target does fail.
+
+#### Placed and routed
+
+| `ISSUE_REGS` | T | WNS | critical path |
+|---|---|---|---|
+| 0 | 78 | −4.886 ns (67.2 MHz) | `index_table` → row mux → lane stage 1, 14.9 ns |
+| 1 | 79 | +0.087 ns | sorter; lane stage 1 at +0.098 ns |
+| **2** | **80** | **+0.202 ns (102.1 MHz)** | sorter, sub-stage 10 → 12 |
+
+**Shipped: `ISSUE_REGS = 2`, T = 80 cycles = 0.80 µs.** At 12,384 LUT (59.5%), 9,616 FF and 33
+DSP, it is frozen as `ISSUE_REGS` in architecture.md, `params.py` and `nms_pkg.vhd`, and
+`LATENCY_CYCLES` is now 80.
+
+The margins are thin, and adding the UART at D1 will cost more. The remedies are listed in
+results.md §5.
+
+---
+
+### D1 — the UART link and the board top, `nms_top`                    2026-09-25
+
+The last RTL: everything between the FT2232HQ's pins and `nms_core`.
+
+- **`uart_rx`**: 8N1. It holds the RX pin's 2-flop synchroniser, so no caller can forget it.
+  It samples mid-bit at the exact divider of 100, rejects glitches shorter than half a bit,
+  and flags a '0' stop bit as a framing error.
+- **`uart_tx`**: 8N1, with the line driven straight from a register.
+- **`frame_rx`** follows the start/busy rule from fsm_design.md §1:
+  - magic hunt, with `A5 A5 5A` still syncing;
+  - bytewise CRC-8/SMBUS and `seq`;
+  - record packing into `box_store` writes;
+  - idle timeout (two byte-times) and framing-error drop.
+  It rejects with `0x02` if the core is busy at the end, **if any record write was blocked**,
+  or if the areas are unsettled, and with `0x01` on a CRC mismatch.
+- **`frame_tx`**: the 6-byte reply. The zero-mask-on-error rule is applied once, here, for
+  both the core's `done` and `frame_rx`'s rejects.
+- **`nms_top`**: power-on reset plus a synchronised, debounced BTNC. The LEDs show
+  `keep_mask(15:0)`, which settles plan.md O4.
+- **`deployment/basys3.xdc`**: hand-written, because Digilent's board files do not exist for
+  2026.1. Clock W5, `RsRx` B18, `RsTx` A18, BTNC U18, LEDs. **Re-check every pin against
+  Digilent's master XDC before the first bitstream goes on a board.**
+
+**Vectors:** `vectors.py` now writes `frames.txt`: every case as a 264-byte wire frame (with
+`seq = 0x40 + i` and the CRC from `params.crc8`) plus its expected reply. The frame testbenches
+read it, so no testbench carries its own CRC implementation that could share a mistake with
+`frame_rx`. `test_vectors` checks every field against the wire spec.
+
+#### Testbenches
+
+| testbench | covers | configurations |
+|---|---|---|
+| `tb_uart` | 512 bytes looped back; every line run timed (low runs exact, high runs ≤ 2 cycles over); glitch rejection; framing error and recovery; ±3% bit-length drift | `BAUD_DIV` 100, 7 and 4 (4 added in M3) |
+| `tb_frame_rx` | byte level, with `busy` and `settled` forced: all 20 frames (writes, start, mask, seq); CRC reject; four busy/settle rejects, including busy only during record 10; resync after garbage; timeout; framing-error recovery | — |
+| `tb_nms_top` | at the pins, bit by bit, with `BAUD_DIV` 4 (8 before M3): frames answered bit-exact, including the LEDs; CRC reject reply; resync; truncated frame (silence, then recovery); framing error; BTNC mid-frame | 2 frames in `make test`, all 20 in `make test-full` (M3) |
+
+The busy and blocked paths can only be reached in `tb_frame_rx`: at 1 Mbaud a frame takes 2.64
+ms and a batch 0.80 µs.
+
+Three testbench bugs were found and fixed on the way. None was in the RTL:
+- the bit timer measured the power-up idle as a bit;
+- the testbench's own busy → start handshake lengthened the stop bit;
+- the host receiver's `wait until RsTx = '1'` slept through every other byte, because
+  `wait until` waits for an *event*.
+
+#### Mutation results
+
+| mutant | caught by |
+|---|---|
+| blocked write not remembered | `tb_frame_rx`: "busy during record 10: 1 starts, expected 0" — the mixed-frame hazard the FSM review found |
+| second `A5` loses the half-match | `tb_frame_rx`, resync after garbage |
+| CRC skips the `seq` byte | `tb_frame_rx`: every frame rejected |
+| `present_mask` bytes reversed | `tb_frame_rx`: `partial_present`'s mask read back as FFFF0000 |
+| idle timeout never fires | `tb_frame_rx`: the truncated frame swallows the next one |
+| zero-mask rule dropped | `tb_nms_top`: a CRC reject leaked the previous batch's mask |
+| no glitch rejection | `tb_uart`: a sub-half-bit glitch taken as a start bit |
+
+7 of 7 killed.
+
+#### Implemented on the real part
+
+`make impl` (new `scripts/impl.tcl`) implements `nms_top` with the XDC, not out of context:
+
+| setup WNS | hold WHS | LUT | FF | DSP | I/O | bitstream |
+|---|---|---|---|---|---|---|
+| **+0.200 ns** | **+0.043 ns** | 12,570 (60.4%) | 9,979 | 33 | 20 | written |
+
+The UART added about 190 LUT and cost 0.002 ns of slack, so the margin risk carried out of C4
+did not materialise. The critical path is still the sorter.
+
+**Not done:** the design has not run on a board. D3, the host script, is next, and the first
+hardware run will also give the real USB round-trip figure.
+
+---
+
+### M3 — two test tiers: CI in minutes, full volume on demand          2026-09-25
+
+With C4 and D1 in, `make test` took about 10 min locally and 13–14 min in CI. Nearly all of
+it was three things:
+
+| cost | where | why |
+|---|---|---|
+| 442 s | `tb_nms_core` | 1,020 batches × 5 configurations, with the whole core simulated every clock |
+| 80 s | `tb_nms_top` | bit-level serial traffic through the whole core |
+| 44 s | pytest | the 20,000-batch model-vs-model sweep |
+| ~25 s | everything else | |
+
+No check was removed. Instead there are now two tiers. **`make test`**, which CI runs, keeps
+every check but sizes the expensive ones down. **`make test-full`** restores the full volume.
+The Makefile now chooses `SWEEP_FULL_<tb>` under `FULL=1`, and several generics per sweep run
+are joined with commas.
+
+| check | `make test` (CI) | `make test-full` |
+|---|---|---|
+| `tb_nms_core`, shipped config | 20 curated + 150 random | 20 curated + 1,000 random |
+| `tb_nms_core`, 4 other configs | 20 curated each | 20 curated + 1,000 random each, plus P = 1 |
+| `tb_nms_top` | 2 frames + all directed scenarios, `BAUD_DIV` 4 | 20 frames + all directed |
+| pytest model sweep | 2,000 batches | 20,000 batches (`NMS_FULL=1`) |
+| everything else | unchanged | unchanged |
+
+**Result: `make test` runs in 84 s locally, from about 10 min.** Every configuration still runs
+bit-exact with its latency pinned, so a configuration that breaks cannot pass CI. What CI no
+longer does is the *volume*: the thousand-batch random soak per configuration and the 20-frame
+pin-level run.
+
+`tb_nms_top` moved to `BAUD_DIV` 4, the smallest `uart_rx` accepts, so `tb_uart` gained a
+`BAUD_DIV` = 4 run to prove that divider directly. That run found a testbench bug: the glitch
+length `BAUD_DIV/2 − 3` went negative. It is now clamped to at least one clock, still under half
+a bit.
+
+**Rule:** run `make test-full` before merging anything that touches the datapath (the
+testbenches, the core RTL or the golden model). CI's `workflow_dispatch` trigger can run it on
+demand if it is wired to `make test-full`.
+
+---
+
+### D3 — the host program, `make program`, and the README           2026-09-25
+
+**Written and unit-tested. Not yet run on a board.**
+
+- **`models/nms/wire.py`** is the wire format, in one place: `encode_frame`, `encode_reply`
+  (zero mask unless status is OK), `decode_reply` and `next_seq`.
+  - `decode_reply` rejects a short reply, a wrong `seq`, an unknown status, and a mask leaked
+    alongside an error status.
+  - `vectors.build_frame` now calls `encode_frame`. `frames.txt` regenerated byte-identical,
+    so the frames the testbenches were verified against are exactly the frames the host sends.
+  - It is a separate module, rather than living in `host.py`, because `vectors` and `host`
+    both need it and would otherwise import each other.
+- **`models/nms/host.py`** is the PC-side program for `/dev/ttyUSB1` at 1 Mbaud.
+  - `--selftest` sends the 20 committed frames verbatim and compares every reply byte.
+  - `--crc-test` sends a corrupted frame and expects status `0x01`.
+  - `--random N` checks hostile batches against both model forms.
+  - `--latency N` prints min, median, p99 and max round-trip time.
+  - At startup it sets the FTDI latency timer to 1 ms, or prints the `sudo` command. A
+    `/dev/serial/by-id` port is resolved to its `ttyUSBn` first.
+  - Exit status: 0 all passed, 1 failure or timeout, 2 port unopenable.
+  - `pyserial` is added as a dependency.
+- **`scripts/program.tcl` / `make program`** loads `build/impl/nms_top.bit` over JTAG.
+  Volatile: lost at power-off.
+- **`make host`** wraps the host program: `--selftest` by default, other modes through
+  `ARGS="..."`, the port through `PORT=...`. The board flow is `make program`, then
+  `make host`.
+- **README rewritten.** It still said 72 cycles, "not written yet" for `synth.tcl`, the XDC
+  and the host, and described a Vivado part-enumeration blocker fixed at M1. Every figure is
+  now copied from results.md, architecture.md or plan.md, and the status table uses plan.md's
+  stage labels. It adds a bring-up sequence and a troubleshooting table for a first
+  `--selftest` that fails.
+
+**Tests** (`models/nms/test_wire.py`, 11 tests, under a second, no serial port):
+- reply decoding and the reject cases;
+- the zero-mask rule and the `seq` wrap;
+- malformed-frame refusal;
+- by-id symlink resolution;
+- a missing port exiting 2 without a traceback.
+
+There is deliberately no fake serial link. The host is exercised on the real board.
+
+**Next, on hardware:** check the XDC pins against Digilent's master XDC, then `make program`.
+Then `--selftest` (expect 20/20), `--crc-test`, `--random 1000`, and `--latency 500` with the
+timer at 16 ms and at 1 ms. Record the measured round trip in results.md §6.

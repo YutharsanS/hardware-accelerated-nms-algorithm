@@ -68,6 +68,8 @@ __pycache__/
 # Pretrained Gaussian scenes are hundreds of MB - downloaded, never committed.
 # See "Reproducing" in docs/phase0_findings.md for the download command.
 models/data/scenes/
+# On-demand random batches for tb_nms_core; reproducible from their seed.
+models/data/random/
 *.ply
 *.npz
 

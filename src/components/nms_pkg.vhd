@@ -97,15 +97,21 @@ package nms_pkg is
     -- each, that is the 7,200 LUT (34.6%) the area budget is built on.
     constant CAS_COUNT : natural := SORT_SUBSTAGES * (N / 2);
 
-    -- Register cuts inside the bitonic network, giving a 3-cycle sort. 0 is purely
-    -- combinational and will not close 100 MHz; 14 is fully pipelined and costs 10k FF
-    -- for throughput nothing can consume. One cut per sub-stage is the finest possible,
-    -- so this is bounded above by SORT_SUBSTAGES.
-    constant PIPE_CUTS : natural := 2;
+    -- Register cuts inside the bitonic network; the sort takes exactly this many cycles.
+    -- 8 is the lowest swept value that meets 100 MHz after place and route (119.2 MHz,
+    -- docs/results.md section 2); 2 reaches only 53.9 MHz. 0 is purely combinational;
+    -- one cut per sub-stage is the finest possible, so this is bounded by SORT_SUBSTAGES.
+    constant PIPE_CUTS : natural := 8;
 
-    -- Exact batch latency at P_DEFAULT. An equality, not a bound: no term depends on the
-    -- data, so worst case equals best case for every possible input.
-    constant LATENCY_CYCLES : natural := N * N / P_DEFAULT + LANE_LATENCY + PIPE_CUTS + 2;
+    -- Register stages between nms_ctrl's issue and lane stage 1 in nms_core: after the
+    -- selects, then after the payload muxes. Without them that path is 14.9 ns in the
+    -- placed core; with 2 it closes 100 MHz (docs/results.md section 5).
+    constant ISSUE_REGS : natural := 2;
+
+    -- Exact batch latency of nms_core at P_DEFAULT. An equality, not a bound: no term
+    -- depends on the data, so worst case equals best case for every possible input.
+    constant LATENCY_CYCLES : natural :=
+        N * N / P_DEFAULT + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2;
 
     -- --- wire protocol -------------------------------------------------------------
 
@@ -129,6 +135,11 @@ package nms_pkg is
     -- Exactly 100, so there is zero baud error. tb_params asserts the division is exact.
     constant BAUD_DIV : natural := CLOCK_HZ / BAUD;
 
+    -- CRC-8/SMBUS over frame bytes 2..262: x^8 + x^2 + x + 1, MSB first, no reflection,
+    -- no final XOR. Check value for ASCII "123456789" is 16#F4#.
+    constant CRC8_POLY : natural := 16#07#;
+    constant CRC8_INIT : natural := 16#00#;
+
     -- --- types ---------------------------------------------------------------------
 
     subtype coord_t  is unsigned(COORD_W - 1 downto 0);
@@ -143,5 +154,9 @@ package nms_pkg is
     type index_array_t  is array (0 to N - 1) of index_t;
     type area_array_t   is array (0 to N - 1) of area_t;
     type record_array_t is array (0 to N - 1) of record_t;
+
+    -- Unconstrained, for ports sized by a generic: box_store's P candidate outputs.
+    type record_vec_t is array (natural range <>) of record_t;
+    type area_vec_t   is array (natural range <>) of area_t;
 
 end package nms_pkg;

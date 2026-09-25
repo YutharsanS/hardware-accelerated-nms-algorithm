@@ -9,6 +9,7 @@ separate ``.txt`` that nothing parses.
 ``<case>.hex``   32 records (16 hex) then one ``present_mask`` (8 hex)
 ``<case>.mask``  the expected ``keep_mask`` (8 hex)
 ``<case>.keys``  the 21-bit sort key per slot, in input order (6 hex)
+``<case>.areas`` the clamped 24-bit area per slot, in input order (6 hex)
 ``<case>.order`` the expected rank-to-slot table (2 hex per rank)
 ``<case>.trace`` per-rank resolve state: rank slot kept row valid keep
 ``<case>.pairs`` explicit IoU lane stimulus and expected result
@@ -36,16 +37,37 @@ would cancel out instead of failing.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from models.nms import batches, model
+from models.nms import batches, model, wire
 from models.nms import params as p
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "vectors"
 
+RANDOM_DIR = Path(__file__).resolve().parents[2] / "models" / "data" / "random"
+"""Where the on-demand random batch file goes. Gitignored: it is ~40 kB per 1,000 batches
+and fully reproducible from its seed, so committing it would only add churn."""
+
+RANDOM_BATCHES = "random_batches.txt"
+RANDOM_BATCH_COUNT = 1_000
+RANDOM_BATCH_SEED = 2026
+
 MANIFEST = "cases.txt"
 """Lists every case name, one per line, for the VHDL testbenches to iterate."""
+
+FRAMES = "frames.txt"
+"""Every case as a complete wire frame plus its expected reply, for the frame-level testbenches.
+
+Built here with the reference :func:`models.nms.params.crc8` rather than in VHDL, so the
+testbench host and ``frame_rx`` never share a CRC implementation -- a mistake in one cannot
+cancel a mistake in the other.
+"""
+
+FRAME_SEQ_BASE = 0x40
+"""Case *i* in manifest order carries ``seq = FRAME_SEQ_BASE + i``: distinct per case and not
+starting at zero, so an echo that was stuck at 0 or copied the wrong frame shows."""
 
 PAIR_MANIFEST = "pairs.txt"
 """Lists every ``.pairs`` file stem, for the IoU lane testbench to iterate."""
@@ -165,6 +187,11 @@ def write_case(
 
     keys = [_hex(model.sort_key(b.score, i), KEY_HEX) for i, b in enumerate(case.boxes)]
     written.append(_write(outdir / f"{case.name}.keys", keys))
+
+    # Areas come from the model, not from the box_store testbench, for the reason given in
+    # _pair_row: a testbench that derived them would duplicate the clamp it is checking.
+    areas = [_hex(model.box_area(b), AREA_HEX) for b in case.boxes]
+    written.append(_write(outdir / f"{case.name}.areas", areas))
 
     order = [_hex(slot, SLOT_HEX) for slot in model.sort_order(case.boxes)]
     written.append(_write(outdir / f"{case.name}.order", order))
@@ -383,6 +410,79 @@ def read_keys(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:
     return [int(v, 16) for v in (outdir / f"{name}.keys").read_text().split()]
 
 
+def write_random_batches(
+    count: int = RANDOM_BATCH_COUNT,
+    *,
+    seed: int = RANDOM_BATCH_SEED,
+    outdir: Path = RANDOM_DIR,
+) -> Path:
+    """Write hostile random batches for the whole-core testbench.
+
+    The file opens with one line giving the batch count. Each batch is then 34 lines: 32
+    records (16 hex), the ``present_mask`` (8 hex) and the expected ``keep_mask`` (8 hex).
+    Three batches in four have every slot present; the rest draw a random mask, with an
+    all-absent batch forced every 97th, so absent slots are exercised throughout the file.
+
+    Args:
+        count: Number of batches.
+        seed: Seed for both the geometry and the present masks.
+        outdir: Destination directory, created if absent.
+
+    Returns:
+        The path written.
+    """
+    rng = random.Random(seed)
+    lines = [str(count)]
+    for i, boxes in enumerate(batches.hostile_stream(count, seed=seed)):
+        if i % 97 == 96:
+            mask = 0
+        elif i % 4 == 3:
+            mask = rng.getrandbits(p.N)
+        else:
+            mask = (1 << p.N) - 1
+        keep = model.nms_allpairs(boxes, mask)
+        # The sequential loop is the authority on what NMS means; a batch where the two
+        # forms disagree must never reach the RTL as an expectation.
+        assert keep == model.nms_sequential(boxes, mask), f"batch {i}: forms disagree"
+        lines.extend(_hex(model.pack_record(b), RECORD_HEX) for b in boxes)
+        lines.append(_hex(mask, MASK_HEX))
+        lines.append(_hex(keep, MASK_HEX))
+    outdir.mkdir(parents=True, exist_ok=True)
+    return _write(outdir / RANDOM_BATCHES, lines)
+
+
+def read_random_batches(path: Path) -> list[tuple[list[model.Box], int, int]]:
+    """Read a file written by :func:`write_random_batches`.
+
+    Args:
+        path: The file.
+
+    Returns:
+        ``(boxes, present_mask, keep_mask)`` per batch.
+    """
+    lines = path.read_text().split()
+    count = int(lines[0])
+    out = []
+    for i in range(count):
+        base = 1 + i * (p.N + 2)
+        boxes = [model.unpack_record(int(v, 16)) for v in lines[base : base + p.N]]
+        out.append((boxes, int(lines[base + p.N], 16), int(lines[base + p.N + 1], 16)))
+    return out
+
+
+def read_areas(name: str, outdir: Path = DEFAULT_DIR) -> list[int]:
+    """Read the per-slot area file.
+
+    Args:
+        name: Case name.
+        outdir: Directory holding the files.
+
+    Returns:
+        The clamped area of each slot, in input order.
+    """
+    return [int(v, 16) for v in (outdir / f"{name}.areas").read_text().split()]
+
+
 def read_trace(name: str, outdir: Path = DEFAULT_DIR) -> list[model.ResolveStep]:
     """Read the per-rank resolve trace.
 
@@ -468,7 +568,46 @@ def write_all(outdir: Path = DEFAULT_DIR) -> dict[str, list[Path]]:
         written[name] = [_write(outdir / name, sorted(stems))]
 
     written[MANIFEST] = [_write(outdir / MANIFEST, sorted(cases))]
+
+    frame_lines = []
+    for i, name in enumerate(sorted(cases)):
+        frame, reply = build_frame(cases[name], FRAME_SEQ_BASE + i)
+        frame_lines += [frame.hex().upper(), reply.hex().upper()]
+    written[FRAMES] = [_write(outdir / FRAMES, frame_lines)]
     return written
+
+
+def build_frame(case: Case, seq: int) -> tuple[bytes, bytes]:
+    """Build a case's host -> FPGA frame and the reply the FPGA must send back.
+
+    Args:
+        case: The case.
+        seq: The frame's sequence number, echoed in the reply.
+
+    Returns:
+        ``(frame, reply)``: 264 and 6 bytes, every field MSB first (architecture.md section 3).
+    """
+    # The same encoder the live host uses (models/nms/wire.py), so the frames the
+    # testbenches were verified against are byte-for-byte the frames sent to the board.
+    frame = wire.encode_frame(case.boxes, case.present_mask, seq)
+    reply = wire.encode_reply(p.STATUS_OK, seq, case.keep_mask)
+    return frame, reply
+
+
+def read_frames(outdir: Path = DEFAULT_DIR) -> list[tuple[bytes, bytes]]:
+    """Read ``frames.txt``.
+
+    Args:
+        outdir: Directory holding the file.
+
+    Returns:
+        ``(frame, reply)`` per case, in manifest order.
+    """
+    lines = (outdir / FRAMES).read_text().split()
+    return [
+        (bytes.fromhex(lines[i]), bytes.fromhex(lines[i + 1]))
+        for i in range(0, len(lines), 2)
+    ]
 
 
 def read_pair_manifest(

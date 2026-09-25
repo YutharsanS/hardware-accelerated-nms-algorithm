@@ -5,6 +5,7 @@ description = "Hardware-accelerated NMS algorithm: VHDL RTL + Python golden mode
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26",
+    "pyserial>=3.5",
 ]
 
 [project.optional-dependencies]
@@ -36,7 +37,9 @@ extend-exclude = [
 # notebooks/ directory, so the previous "notebooks/**/*.ipynb" never matched anything.
 "*.ipynb" = ["T201", "D"]
 # CLI entry points exist to print their report; library modules return strings instead.
+# host.py is one: it runs as `python -m models.nms.host` and reports to the terminal.
 "**/__main__.py" = ["T201"]
+"models/nms/host.py" = ["T201"]
 
 [tool.ruff.lint]
 extend-select = [

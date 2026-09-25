@@ -71,6 +71,7 @@ begin
         dump("SORT_SUBSTAGES", SORT_SUBSTAGES);
         dump("CAS_COUNT", CAS_COUNT);
         dump("PIPE_CUTS", PIPE_CUTS);
+        dump("ISSUE_REGS", ISSUE_REGS);
         dump("LATENCY_CYCLES", LATENCY_CYCLES);
 
         -- --- wire protocol ----------------------------------------------------------
@@ -85,6 +86,8 @@ begin
         dump("CLOCK_HZ", CLOCK_HZ);
         dump("BAUD", BAUD);
         dump("BAUD_DIV", BAUD_DIV);
+        dump("CRC8_POLY", CRC8_POLY);
+        dump("CRC8_INIT", CRC8_INIT);
 
         -- --- the subtypes must be cut from those same constants ---------------------
         --
@@ -152,9 +155,9 @@ begin
             report "T_INT does not fit its own field"
             severity error;
 
-        assert LATENCY_CYCLES = 72
+        assert LATENCY_CYCLES = 80
             report "latency at P_DEFAULT is " & integer'image(LATENCY_CYCLES)
-                 & " cycles, not the 72 docs/architecture.md states"
+                 & " cycles, not the 80 docs/architecture.md states"
             severity error;
         assert N mod P_DEFAULT = 0
             report "P_DEFAULT does not divide N, so a lane would own a partial column"

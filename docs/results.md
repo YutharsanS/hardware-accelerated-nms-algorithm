@@ -6,7 +6,7 @@ unless it says so.
 
 **Method.** `make synth MOD=<module>`, which runs [scripts/synth.tcl](../scripts/synth.tcl):
 out-of-context synthesis through `route_design` on `xc7a35tcpg236-1`, 10 ns constraint
-unless stated. Area is taken from `report_utilization` and timing from `get_timing_paths`.
+unless stated, with **zero input and output delay against the clock on every data port**. Area is taken from `report_utilization` and timing from `get_timing_paths`.
 
 Out-of-context is required, not a convenience: `bitonic32` presents 2 × 32 × 21 bits at its
 boundary, which no 236-pin package can carry. Numbers are taken after routing rather than
@@ -17,6 +17,13 @@ Device totals for `xc7a35tcpg236-1`: **20,800 LUT, 41,600 FF, 90 DSP**.
 
 Reports for the last run of each module land in `build/synth/<module>/`.
 
+> **Method correction (2026-09-24).** Before this date `synth.tcl` set only `create_clock`, so
+> input-port → register and register → output-port paths were *unconstrained* and left out of
+> WNS. That excluded `iou_lane`'s whole stage 1 and `bitonic32`'s first and last segments. The
+> script now constrains every data port with a zero delay, which models each neighbour as a
+> register at the boundary. The clocked figures below are re-measured under that rule. The
+> earlier ones are kept in brackets where they differ. Area is unaffected by the change.
+
 ---
 
 ## 1. Per-module, measured
@@ -25,8 +32,12 @@ Reports for the last run of each module land in `build/synth/<module>/`.
 |---|---|---|---|---|---|---|---|
 | `cas` (one unit) | 32 | 0.2% | 0 | 3 | 0 | 4.348 ns | 230.0 MHz |
 | `bitonic32` (`PIPE_CUTS = 2`) | 9,596 | 46.1% | 1,344 | 720 | 0 | 18.570 ns | 53.9 MHz |
-| `bitonic32` (`PIPE_CUTS = 8`) | 8,112 | 39.0% | 5,376 | 720 | 0 | 8.386 ns | 119.2 MHz |
-| `iou_lane` (one lane) | 109 | 0.5% | 101 | 30 | 2 | 5.880 ns | 170.1 MHz |
+| `bitonic32` (`PIPE_CUTS = 8`) | 8,112 | 39.0% | 5,376 | 720 | 0 | 8.566 ns | 116.7 MHz *(119.2)* |
+| `iou_lane` (one lane) | 109 | 0.5% | 101 | 30 | 2 | 7.161 ns | 139.6 MHz *(170.1)* |
+| `nms_ctrl` (P = 16, C = 8) | 382 | 1.8% | 300 | 0 | 0 | 5.714 ns | 175.0 MHz |
+| `box_store` (P = 16) | 1,602 | 7.7% | 2,822 | 10 | 1 | 7.355 ns | 136.0 MHz |
+| **`nms_core`** (P = 16, C = 8, I = 2) — **whole compute core** | **12,384** | **59.5%** | **9,616** | 1,210 | **33** | 9.798 ns | **102.1 MHz** |
+| **`nms_top`** — **board design, real pins, not out of context** | **12,570** | **60.4%** | **9,979** | — | **33** | 9.800 ns | **102.0 MHz**, hold +0.043 ns |
 
 `iou_lane` at shipped generics (`T_INT = 128`, `K_SHIFT = 8`).
 
@@ -38,7 +49,7 @@ Reports for the last run of each module land in `build/synth/<module>/`.
 |---|---|---|---|---|---|---|---|
 | 2 (current default) | 9,596 | 46.1% | 40.0 | 1,344 | 18.570 ns | 53.9 MHz | no |
 | 4 | 9,758 | 46.9% | 40.7 | 2,688 | 11.392 ns | 87.8 MHz | no |
-| **8** | **8,112** | **39.0%** | 33.8 | 5,376 | 8.386 ns | **119.2 MHz** | **yes, WNS +1.614 ns** |
+| **8** | **8,112** | **39.0%** | 33.8 | 5,376 | 8.386 ns | **119.2 MHz** | **yes, WNS +1.614 ns** (re-measured with ports constrained: 116.7 MHz, +1.434 ns) |
 | 15 | 7,680 | 36.9% | 32.0 | 10,080 | 5.335 ns | 187.4 MHz | yes |
 
 **Pipelining reduces area here rather than costing it.** LUT is flat from 2 to 4 and then
@@ -121,9 +132,87 @@ Every module that exists clears 100 MHz, with one configuration condition:
 
 | module | Fmax | margin at 100 MHz |
 |---|---|---|
-| `bitonic32` (`PIPE_CUTS = 8`) | 119.2 MHz | WNS +1.614 ns |
-| `iou_lane` | 170.1 MHz | WNS +4.120 ns |
+| `bitonic32` (`PIPE_CUTS = 8`) | 116.7 MHz | WNS +1.434 ns |
+| `iou_lane` | 139.6 MHz | WNS +2.839 ns |
 | `cas` | 230.0 MHz | — |
+
+**With port paths constrained, both modules still clear 100 MHz, but the margins shrink.**
+- **`bitonic32`**: still limited by an internal two-sub-stage segment (after 10 → after 12).
+  8.566 ns against 8.386 before is placement variation, so the port segments are not its
+  critical path.
+- **`iou_lane`**: now limited by **stage 1 from the input ports**, `k_a` → the DSP's
+  synchronous-reset pin. Vivado folded the clamp into the multiplier's reset, so min/max,
+  subtract and clamp all land in front of the DSP in one cycle.
+- **The integration risk this exposes**: in the full design, the lane inputs are fed from
+  `index_table` through a 32:1 × 72 b row-source mux whose selects fan out to 16 lanes. That
+  mux has to fit in the lane's **2.84 ns of remaining slack**, which is tight.
+- **If it misses at C4**, the fix is a registered keeper/candidate stage in the datapath. That
+  is one more lane stage (`LANE_LATENCY` 5), which `nms_ctrl` absorbs through its generic,
+  costing 1 cycle (T 78 → 79). See [fsm_design.md](fsm_design.md) §9.
+
+### The integrated row-source path will not close in one cycle
+
+Now that every piece exists, the path from `nms_ctrl`'s counter to lane stage 1 can be added up
+from measured segments, each timed with its ports constrained:
+
+| segment | delay |
+|---|---|
+| `nms_ctrl`: `cnt` → `index_table` read → `row_src` | 5.714 ns (clock-to-out included) |
+| `box_store`: row mux, `row_src` → `row_rec` / `row_area` | 3.951 ns |
+| `box_store`: candidate mux, `col_grp` → `cand_*` | 2.099 ns (parallel, not additive) |
+| `iou_lane`: stage 1, ports → DSP | 7.161 ns |
+| **wired directly** | **≈ 16.8 ns against 10 ns** |
+
+That sum predicted that C4 would need register stages. **C4 measured it on the placed core**, with
+`ISSUE_REGS` as a generic of `nms_core`:
+
+| `ISSUE_REGS` | T | WNS | Fmax | lane stage 1 slack | sorter slack | LUT | FF |
+|---|---|---|---|---|---|---|---|
+| 0 | 78 | **−4.886 ns** | 67.2 MHz | −4.886 ns (`index_table` → lane, 14.9 ns) | −1.202 ns | — | — |
+| 1 | 79 | +0.087 ns | 100.9 MHz | +0.098 ns (from the payload register) | +0.087 ns | 12,402 | 9,599 |
+| **2** | **80** | **+0.202 ns** | **102.1 MHz** | ≥ +0.202 ns | +0.202 ns | 12,384 | 9,616 |
+
+Four findings:
+
+1. **Registers are required.** With none, the path runs 14.9 ns and the core runs at 67 MHz. The
+   16.8 ns sum of segments was pessimistic, because the tool optimises across block boundaries
+   once the blocks are placed together, but the conclusion stands.
+2. **`ISSUE_REGS = 2` ships** ([architecture.md](architecture.md) §9). **T = 80 cycles =
+   0.80 µs.** `nms_ctrl` absorbed the extra stages through its `LANE_LATENCY` generic with no
+   logic change.
+3. **The critical path moved to the sorter.** In context, `bitonic32`'s sub-stage 10 → 12
+   segment takes 9.8 ns, against 8.57 ns alone. That is routing pressure at 59.5% LUT.
+4. **Both margins are thin.** The sorter has +0.202 ns and the payload register → lane stage 1
+   path has about +0.1 ns (that path now drives 16 lanes' worth of fan-out). Adding the UART at
+   D1 will add routing pressure. Known remedies, in order of cost:
+   - re-placing the sorter cuts through `CUT_AFTER`, or `PIPE_CUTS = 9`, which is +1 cycle;
+   - duplicating the payload register to split the 16-lane fan-out;
+   - a third issue stage, which is +1 cycle.
+
+**Area came in as projected**: 12,384 LUT against the §4 projection of about 11,550 plus the
+issue registers, and exactly 33 DSPs.
+
+### The board design, with the UART, meets 100 MHz
+
+`make impl` implements `nms_top` on the real part with `deployment/basys3.xdc` — real I/O,
+not out of context — and writes a bitstream only if setup and hold both pass:
+
+| | `nms_top` |
+|---|---|
+| setup | **WNS +0.200 ns**, 0 of 15,169 endpoints failing |
+| hold | **WHS +0.043 ns**, 0 failing |
+| area | 12,570 LUT (60.4%), 9,979 FF (24.0%), 33 DSP, 0 BRAM, 20 I/O |
+| critical path | `bitonic32`, sub-stage 12 → 14 |
+| bitstream | written, `build/impl/nms_top.bit` |
+
+The risk carried out of C4 did not materialise. The UART, frame parser and reply logic cost
+about 190 LUT and moved the slack from +0.202 to +0.200 ns. The margin is still thin, and the
+remedies above still apply if a later change eats it. `check_timing` lists 2 inputs and 17
+outputs without delays; those are RsRx, btnC, RsTx and the LEDs, declared false paths in the
+XDC by design.
+
+The `PIPE_CUTS` sweep in §2 predates the method correction. Its internal-segment figures stand,
+but the table has not been re-run with ports constrained.
 
 **P1 — the weakest load-bearing estimate in the plan — is settled, and it was pessimistic.**
 It projected 22–37 ns / 27–45 MHz for the network combinationally; `PIPE_CUTS = 2` measures
@@ -134,18 +223,20 @@ fewer levels in the critical segment than the estimate's arithmetic implied.
 frozen at 100 MHz and `BAUD_DIV` derives from it, so this is a system constant rather than a
 target, and it fixes the setting.
 
-### Open: `nms_pkg.PIPE_CUTS` is still 2
+### Resolved: `PIPE_CUTS` is now 8
 
-The constant has not been changed. At 2 the sorter runs 53.9 MHz and does **not** meet the
-clock the rest of the design assumes. Moving it to 8 costs 6 extra cycles of sorter latency,
-which the FSM must absorb: architecture.md §9's `T = N²/P + L + C + 2` = 72 cycles at `P = 16`
-becomes ≈78 cycles (≈0.78 µs). Correctness at 8 is already verified — B3.1 checked every
-`PIPE_CUTS` from 0 to 15 — so this is a scheduling decision, not a verification one.
+The constant moved from 2 to 8 in architecture.md §9, `params.py` and `nms_pkg.vhd` together, so
+`test_params_agree` still holds. At 2 the sorter ran 53.9 MHz and did **not** meet the clock the
+rest of the design assumes. The 6 extra cycles of sorter latency take architecture.md §9's
+`T = N²/P + L + C + 2` from 72 to **78 cycles (0.78 µs)** at `P = 16`. The FSM design absorbs
+them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 checked every
+`PIPE_CUTS` from 0 to 15, and `tb_bitonic32` now runs at 8 in the standing regression.
 
 ---
 
 ## 6. Not yet measured
 
-`frame_rx` / `frame_tx`, `box_store`, the row buffer, resolve, and the FSM are not written, so
-their rows above remain estimates. The integrated design has never been synthesised as a
-whole, and the per-module figures here exclude inter-block routing.
+Every block is now built. The compute core and the full board design are measured as wholes
+(§1 and §5), including the routing between blocks. What remains unmeasured is hardware: the
+design has not yet run on a Basys 3, so real USB round-trip latency (plan.md Part 1b) is still
+unknown.
