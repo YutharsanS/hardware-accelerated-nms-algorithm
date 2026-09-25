@@ -81,6 +81,24 @@ def test_keys_and_order_files_match_the_model(name: str, written: Path) -> None:
     assert sorted(order) == list(range(p.N))
 
 
+def test_frames_match_the_wire_spec_and_the_model(written: Path) -> None:
+    frames = vectors.read_frames(written)
+    names = vectors.read_manifest(written)
+    assert len(frames) == len(names)
+    for i, (name, (frame, reply)) in enumerate(zip(names, frames, strict=True)):
+        case = vectors.read_case(name, written)
+        seq = vectors.FRAME_SEQ_BASE + i
+        assert len(frame) == p.FRAME_BYTES_IN and len(reply) == p.REPLY_BYTES
+        assert frame[:2] == bytes(p.MAGIC)
+        for slot, box in enumerate(case.boxes):
+            rec = frame[2 + 8 * slot : 10 + 8 * slot]
+            assert model.unpack_record(int.from_bytes(rec, "big")) == box
+        assert int.from_bytes(frame[258:262], "big") == case.present_mask
+        assert frame[262] == seq
+        assert frame[263] == p.crc8(frame[2:263])
+        assert reply == bytes([p.STATUS_OK, seq]) + case.keep_mask.to_bytes(4, "big")
+
+
 def test_random_batches_round_trip_and_match_both_forms(tmp_path: Path) -> None:
     path = vectors.write_random_batches(120, seed=5, outdir=tmp_path)
     read = vectors.read_random_batches(path)
@@ -324,6 +342,7 @@ def test_committed_vectors_are_current(written: Path) -> None:
             assert committed == fresh, f"{name}.{suffix} is stale{stale}"
     for extra in (
         vectors.MANIFEST,
+        vectors.FRAMES,
         vectors.PAIR_MANIFEST,
         f"{vectors.RANDOM_PAIRS}.pairs",
         *(f"{name}.pairs" for name in vectors.PAIR_CASES),

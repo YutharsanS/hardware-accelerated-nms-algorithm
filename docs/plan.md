@@ -44,8 +44,9 @@ compute block is verified and measured ([results.md](results.md)). They are inte
   every batch;
 - 59.5% LUT, 33 DSP and 100 MHz with +0.202 ns of slack, when placed and routed.
 
-Next is D1: UART, `frame_rx` / `frame_tx`, and the board top. The thin timing margin is the risk
-to watch there (results.md §5). See the Part 3 roadmap.
+D1 is done too. The UART, `frame_rx` / `frame_tx` and the board top `nms_top` are verified at
+the pins. The full design meets 100 MHz on the real part (+0.200 ns) and a bitstream is built.
+Next is D3, the host script, and the first run on a Basys 3. See the Part 3 roadmap.
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
 `get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,

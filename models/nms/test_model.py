@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import itertools
 import json
+import os
 import random
 from pathlib import Path
 
@@ -14,7 +15,9 @@ from models.nms import batches, model
 from models.nms import params as p
 
 REPO = Path(__file__).resolve().parents[2]
-AGREEMENT_BATCHES = 20_000
+# The model-versus-model sweep. 20,000 batches is the plan's figure and takes ~45 s, so it
+# runs under `make test-full` (NMS_FULL=1); `make test`, which CI runs, uses 2,000.
+AGREEMENT_BATCHES = 20_000 if os.environ.get("NMS_FULL") else 2_000
 
 
 # --- the anchor --------------------------------------------------------------------

@@ -57,6 +57,18 @@ RANDOM_BATCH_SEED = 2026
 MANIFEST = "cases.txt"
 """Lists every case name, one per line, for the VHDL testbenches to iterate."""
 
+FRAMES = "frames.txt"
+"""Every case as a complete wire frame plus its expected reply, for the frame-level testbenches.
+
+Built here with the reference :func:`models.nms.params.crc8` rather than in VHDL, so the
+testbench host and ``frame_rx`` never share a CRC implementation -- a mistake in one cannot
+cancel a mistake in the other.
+"""
+
+FRAME_SEQ_BASE = 0x40
+"""Case *i* in manifest order carries ``seq = FRAME_SEQ_BASE + i``: distinct per case and not
+starting at zero, so an echo that was stuck at 0 or copied the wrong frame shows."""
+
 PAIR_MANIFEST = "pairs.txt"
 """Lists every ``.pairs`` file stem, for the IoU lane testbench to iterate."""
 
@@ -556,7 +568,48 @@ def write_all(outdir: Path = DEFAULT_DIR) -> dict[str, list[Path]]:
         written[name] = [_write(outdir / name, sorted(stems))]
 
     written[MANIFEST] = [_write(outdir / MANIFEST, sorted(cases))]
+
+    frame_lines = []
+    for i, name in enumerate(sorted(cases)):
+        frame, reply = build_frame(cases[name], FRAME_SEQ_BASE + i)
+        frame_lines += [frame.hex().upper(), reply.hex().upper()]
+    written[FRAMES] = [_write(outdir / FRAMES, frame_lines)]
     return written
+
+
+def build_frame(case: Case, seq: int) -> tuple[bytes, bytes]:
+    """Build a case's host -> FPGA frame and the reply the FPGA must send back.
+
+    Args:
+        case: The case.
+        seq: The frame's sequence number, echoed in the reply.
+
+    Returns:
+        ``(frame, reply)``: 264 and 6 bytes, every field MSB first (architecture.md section 3).
+    """
+    body = b"".join(
+        model.pack_record(b).to_bytes(p.RECORD_BYTES, "big") for b in case.boxes
+    )
+    body += case.present_mask.to_bytes(p.N // 8, "big") + bytes([seq])
+    frame = bytes(p.MAGIC) + body + bytes([p.crc8(body)])
+    reply = bytes([p.STATUS_OK, seq]) + case.keep_mask.to_bytes(p.N // 8, "big")
+    return frame, reply
+
+
+def read_frames(outdir: Path = DEFAULT_DIR) -> list[tuple[bytes, bytes]]:
+    """Read ``frames.txt``.
+
+    Args:
+        outdir: Directory holding the file.
+
+    Returns:
+        ``(frame, reply)`` per case, in manifest order.
+    """
+    lines = (outdir / FRAMES).read_text().split()
+    return [
+        (bytes.fromhex(lines[i]), bytes.fromhex(lines[i + 1]))
+        for i in range(0, len(lines), 2)
+    ]
 
 
 def read_pair_manifest(

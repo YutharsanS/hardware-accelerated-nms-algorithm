@@ -37,6 +37,7 @@ Reports for the last run of each module land in `build/synth/<module>/`.
 | `nms_ctrl` (P = 16, C = 8) | 382 | 1.8% | 300 | 0 | 0 | 5.714 ns | 175.0 MHz |
 | `box_store` (P = 16) | 1,602 | 7.7% | 2,822 | 10 | 1 | 7.355 ns | 136.0 MHz |
 | **`nms_core`** (P = 16, C = 8, I = 2) — **whole compute core** | **12,384** | **59.5%** | **9,616** | 1,210 | **33** | 9.798 ns | **102.1 MHz** |
+| **`nms_top`** — **board design, real pins, not out of context** | **12,570** | **60.4%** | **9,979** | — | **33** | 9.800 ns | **102.0 MHz**, hold +0.043 ns |
 
 `iou_lane` at shipped generics (`T_INT = 128`, `K_SHIFT = 8`).
 
@@ -191,6 +192,25 @@ Four findings:
 **Area came in as projected**: 12,384 LUT against the §4 projection of about 11,550 plus the
 issue registers, and exactly 33 DSPs.
 
+### The board design, with the UART, meets 100 MHz
+
+`make impl` implements `nms_top` on the real part with `deployment/basys3.xdc` — real I/O,
+not out of context — and writes a bitstream only if setup and hold both pass:
+
+| | `nms_top` |
+|---|---|
+| setup | **WNS +0.200 ns**, 0 of 15,169 endpoints failing |
+| hold | **WHS +0.043 ns**, 0 failing |
+| area | 12,570 LUT (60.4%), 9,979 FF (24.0%), 33 DSP, 0 BRAM, 20 I/O |
+| critical path | `bitonic32`, sub-stage 12 → 14 |
+| bitstream | written, `build/impl/nms_top.bit` |
+
+The risk carried out of C4 did not materialise. The UART, frame parser and reply logic cost
+about 190 LUT and moved the slack from +0.202 to +0.200 ns. The margin is still thin, and the
+remedies above still apply if a later change eats it. `check_timing` lists 2 inputs and 17
+outputs without delays; those are RsRx, btnC, RsTx and the LEDs, declared false paths in the
+XDC by design.
+
 The `PIPE_CUTS` sweep in §2 predates the method correction. Its internal-segment figures stand,
 but the table has not been re-run with ports constrained.
 
@@ -216,8 +236,7 @@ them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 ch
 
 ## 6. Not yet measured
 
-`frame_rx` / `frame_tx` are not written, so their rows above remain estimates. The compute core
-itself is now measured as a whole (`nms_core`, §1 and §5). The FSM, row
-buffer and resolve are built and measured as `nms_ctrl`; the payload and area registers, the
-row-source mux and the candidate muxes are built and measured as `box_store` (§1). The integrated design has never been synthesised as a
-whole, and the per-module figures here exclude inter-block routing.
+Every block is now built. The compute core and the full board design are measured as wholes
+(§1 and §5), including the routing between blocks. What remains unmeasured is hardware: the
+design has not yet run on a Basys 3, so real USB round-trip latency (plan.md Part 1b) is still
+unknown.

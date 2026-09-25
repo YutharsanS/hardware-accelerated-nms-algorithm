@@ -34,7 +34,11 @@ entity tb_nms_core is
         PIPE_CUTS   : natural  := work.nms_pkg.PIPE_CUTS;
         ISSUE_REGS  : natural  := work.nms_pkg.ISSUE_REGS;
         VECTOR_DIR  : string   := "models/data/vectors/";
-        RANDOM_FILE : string   := "models/data/random/random_batches.txt"
+        RANDOM_FILE : string   := "models/data/random/random_batches.txt";
+        -- How many of the file's random batches to run. `make test` (CI) runs 150 at the
+        -- shipped configuration and none at the others; `make test-full` runs all 1,000
+        -- everywhere. See scripts/Makefile.
+        RANDOM_COUNT : natural := 1_000
     );
 end entity tb_nms_core;
 
@@ -43,7 +47,6 @@ architecture sim of tb_nms_core is
     constant T : positive := N * N / P + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2;
 
     constant MIN_CASES  : natural := 20;
-    constant MIN_RANDOM : natural := 1_000;
 
     signal clk     : std_logic := '0';
     signal running : boolean   := true;
@@ -250,7 +253,11 @@ begin
             severity failure;
         readline(rfile, buf);
         read(buf, count);
-        for b in 0 to count - 1 loop
+        assert count >= RANDOM_COUNT
+            report RANDOM_FILE & " holds " & integer'image(count) & " batches, fewer than "
+                 & "RANDOM_COUNT = " & integer'image(RANDOM_COUNT)
+            severity failure;
+        for b in 0 to RANDOM_COUNT - 1 loop
             for i in 0 to N - 1 loop
                 readline(rfile, buf);
                 hread(buf, rraw);
@@ -267,9 +274,11 @@ begin
 
         assert curated >= MIN_CASES
             report "only " & integer'image(curated) & " curated cases ran" severity error;
-        assert randoms >= MIN_RANDOM
+        assert randoms = RANDOM_COUNT
             report "only " & integer'image(randoms) & " random batches ran" severity error;
-        assert nonfull > 100
+        -- A quarter of the random batches draw a random present_mask, and the curated set has
+        -- two absent-slot cases, so absent slots must have been exercised in proportion.
+        assert nonfull >= 2 + randoms / 5
             report "only " & integer'image(nonfull) & " batches had absent slots"
             severity error;
 

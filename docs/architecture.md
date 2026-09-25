@@ -262,7 +262,9 @@ supersedes this table wherever a block has actually been built):
 * **Combinational logic as concurrent assignments, never combinational processes**; processes are
   clocked only, with `(clk)` as the whole sensitivity list. This makes an incomplete sensitivity
   list — itself a sim/synth mismatch — unrepresentable. GHDL also analyses with `-Wsensitivity`.
-* The UART RX pin is the **only** asynchronous input: 2-flop synchroniser, no exceptions.
+* **Two asynchronous inputs, each through a 2-flop synchroniser, no exceptions:** the UART RX
+  pin (inside `uart_rx`) and the BTNC reset button (in `nms_top`, then debounced). An earlier
+  revision named RX as the only one; the button is asynchronous too.
 * Every testbench **terminates on its own** and ends with `report "PASS"`.
 
 ---
