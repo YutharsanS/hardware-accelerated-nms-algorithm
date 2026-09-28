@@ -36,7 +36,12 @@ set rtl {
     src/components/iou_lane.vhd
     src/components/box_store.vhd
     src/components/nms_ctrl.vhd
+    src/components/uart_rx.vhd
+    src/components/uart_tx.vhd
+    src/components/frame_rx.vhd
+    src/components/frame_tx.vhd
     src/pipeline/nms_core.vhd
+    src/pipeline/nms_top.vhd
 }
 
 create_project -in_memory -part $part

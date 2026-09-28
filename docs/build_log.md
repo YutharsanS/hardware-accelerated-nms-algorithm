@@ -1134,3 +1134,166 @@ DSP, it is frozen as `ISSUE_REGS` in architecture.md, `params.py` and `nms_pkg.v
 
 The margins are thin, and adding the UART at D1 will cost more. The remedies are listed in
 results.md §5.
+
+---
+
+### D1 — the UART link and the board top, `nms_top`                    2026-09-25
+
+The last RTL: everything between the FT2232HQ's pins and `nms_core`.
+
+- **`uart_rx`**: 8N1. It holds the RX pin's 2-flop synchroniser, so no caller can forget it.
+  It samples mid-bit at the exact divider of 100, rejects glitches shorter than half a bit,
+  and flags a '0' stop bit as a framing error.
+- **`uart_tx`**: 8N1, with the line driven straight from a register.
+- **`frame_rx`** follows the start/busy rule from fsm_design.md §1:
+  - magic hunt, with `A5 A5 5A` still syncing;
+  - bytewise CRC-8/SMBUS and `seq`;
+  - record packing into `box_store` writes;
+  - idle timeout (two byte-times) and framing-error drop.
+  It rejects with `0x02` if the core is busy at the end, **if any record write was blocked**,
+  or if the areas are unsettled, and with `0x01` on a CRC mismatch.
+- **`frame_tx`**: the 6-byte reply. The zero-mask-on-error rule is applied once, here, for
+  both the core's `done` and `frame_rx`'s rejects.
+- **`nms_top`**: power-on reset plus a synchronised, debounced BTNC. The LEDs show
+  `keep_mask(15:0)`, which settles plan.md O4.
+- **`deployment/basys3.xdc`**: hand-written, because Digilent's board files do not exist for
+  2026.1. Clock W5, `RsRx` B18, `RsTx` A18, BTNC U18, LEDs. **Re-check every pin against
+  Digilent's master XDC before the first bitstream goes on a board.**
+
+**Vectors:** `vectors.py` now writes `frames.txt`: every case as a 264-byte wire frame (with
+`seq = 0x40 + i` and the CRC from `params.crc8`) plus its expected reply. The frame testbenches
+read it, so no testbench carries its own CRC implementation that could share a mistake with
+`frame_rx`. `test_vectors` checks every field against the wire spec.
+
+#### Testbenches
+
+| testbench | covers | configurations |
+|---|---|---|
+| `tb_uart` | 512 bytes looped back; every line run timed (low runs exact, high runs ≤ 2 cycles over); glitch rejection; framing error and recovery; ±3% bit-length drift | `BAUD_DIV` 100, 7 and 4 (4 added in M3) |
+| `tb_frame_rx` | byte level, with `busy` and `settled` forced: all 20 frames (writes, start, mask, seq); CRC reject; four busy/settle rejects, including busy only during record 10; resync after garbage; timeout; framing-error recovery | — |
+| `tb_nms_top` | at the pins, bit by bit, with `BAUD_DIV` 4 (8 before M3): frames answered bit-exact, including the LEDs; CRC reject reply; resync; truncated frame (silence, then recovery); framing error; BTNC mid-frame | 2 frames in `make test`, all 20 in `make test-full` (M3) |
+
+The busy and blocked paths can only be reached in `tb_frame_rx`: at 1 Mbaud a frame takes 2.64
+ms and a batch 0.80 µs.
+
+Three testbench bugs were found and fixed on the way. None was in the RTL:
+- the bit timer measured the power-up idle as a bit;
+- the testbench's own busy → start handshake lengthened the stop bit;
+- the host receiver's `wait until RsTx = '1'` slept through every other byte, because
+  `wait until` waits for an *event*.
+
+#### Mutation results
+
+| mutant | caught by |
+|---|---|
+| blocked write not remembered | `tb_frame_rx`: "busy during record 10: 1 starts, expected 0" — the mixed-frame hazard the FSM review found |
+| second `A5` loses the half-match | `tb_frame_rx`, resync after garbage |
+| CRC skips the `seq` byte | `tb_frame_rx`: every frame rejected |
+| `present_mask` bytes reversed | `tb_frame_rx`: `partial_present`'s mask read back as FFFF0000 |
+| idle timeout never fires | `tb_frame_rx`: the truncated frame swallows the next one |
+| zero-mask rule dropped | `tb_nms_top`: a CRC reject leaked the previous batch's mask |
+| no glitch rejection | `tb_uart`: a sub-half-bit glitch taken as a start bit |
+
+7 of 7 killed.
+
+#### Implemented on the real part
+
+`make impl` (new `scripts/impl.tcl`) implements `nms_top` with the XDC, not out of context:
+
+| setup WNS | hold WHS | LUT | FF | DSP | I/O | bitstream |
+|---|---|---|---|---|---|---|
+| **+0.200 ns** | **+0.043 ns** | 12,570 (60.4%) | 9,979 | 33 | 20 | written |
+
+The UART added about 190 LUT and cost 0.002 ns of slack, so the margin risk carried out of C4
+did not materialise. The critical path is still the sorter.
+
+**Not done:** the design has not run on a board. D3, the host script, is next, and the first
+hardware run will also give the real USB round-trip figure.
+
+---
+
+### M3 — two test tiers: CI in minutes, full volume on demand          2026-09-25
+
+With C4 and D1 in, `make test` took about 10 min locally and 13–14 min in CI. Nearly all of
+it was three things:
+
+| cost | where | why |
+|---|---|---|
+| 442 s | `tb_nms_core` | 1,020 batches × 5 configurations, with the whole core simulated every clock |
+| 80 s | `tb_nms_top` | bit-level serial traffic through the whole core |
+| 44 s | pytest | the 20,000-batch model-vs-model sweep |
+| ~25 s | everything else | |
+
+No check was removed. Instead there are now two tiers. **`make test`**, which CI runs, keeps
+every check but sizes the expensive ones down. **`make test-full`** restores the full volume.
+The Makefile now chooses `SWEEP_FULL_<tb>` under `FULL=1`, and several generics per sweep run
+are joined with commas.
+
+| check | `make test` (CI) | `make test-full` |
+|---|---|---|
+| `tb_nms_core`, shipped config | 20 curated + 150 random | 20 curated + 1,000 random |
+| `tb_nms_core`, 4 other configs | 20 curated each | 20 curated + 1,000 random each, plus P = 1 |
+| `tb_nms_top` | 2 frames + all directed scenarios, `BAUD_DIV` 4 | 20 frames + all directed |
+| pytest model sweep | 2,000 batches | 20,000 batches (`NMS_FULL=1`) |
+| everything else | unchanged | unchanged |
+
+**Result: `make test` runs in 84 s locally, from about 10 min.** Every configuration still runs
+bit-exact with its latency pinned, so a configuration that breaks cannot pass CI. What CI no
+longer does is the *volume*: the thousand-batch random soak per configuration and the 20-frame
+pin-level run.
+
+`tb_nms_top` moved to `BAUD_DIV` 4, the smallest `uart_rx` accepts, so `tb_uart` gained a
+`BAUD_DIV` = 4 run to prove that divider directly. That run found a testbench bug: the glitch
+length `BAUD_DIV/2 − 3` went negative. It is now clamped to at least one clock, still under half
+a bit.
+
+**Rule:** run `make test-full` before merging anything that touches the datapath (the
+testbenches, the core RTL or the golden model). CI's `workflow_dispatch` trigger can run it on
+demand if it is wired to `make test-full`.
+
+---
+
+### D3 — the host program, `make program`, and the README           2026-09-25
+
+**Written and unit-tested. Not yet run on a board.**
+
+- **`models/nms/wire.py`** is the wire format, in one place: `encode_frame`, `encode_reply`
+  (zero mask unless status is OK), `decode_reply` and `next_seq`.
+  - `decode_reply` rejects a short reply, a wrong `seq`, an unknown status, and a mask leaked
+    alongside an error status.
+  - `vectors.build_frame` now calls `encode_frame`. `frames.txt` regenerated byte-identical,
+    so the frames the testbenches were verified against are exactly the frames the host sends.
+  - It is a separate module, rather than living in `host.py`, because `vectors` and `host`
+    both need it and would otherwise import each other.
+- **`models/nms/host.py`** is the PC-side program for `/dev/ttyUSB1` at 1 Mbaud.
+  - `--selftest` sends the 20 committed frames verbatim and compares every reply byte.
+  - `--crc-test` sends a corrupted frame and expects status `0x01`.
+  - `--random N` checks hostile batches against both model forms.
+  - `--latency N` prints min, median, p99 and max round-trip time.
+  - At startup it sets the FTDI latency timer to 1 ms, or prints the `sudo` command. A
+    `/dev/serial/by-id` port is resolved to its `ttyUSBn` first.
+  - Exit status: 0 all passed, 1 failure or timeout, 2 port unopenable.
+  - `pyserial` is added as a dependency.
+- **`scripts/program.tcl` / `make program`** loads `build/impl/nms_top.bit` over JTAG.
+  Volatile: lost at power-off.
+- **`make host`** wraps the host program: `--selftest` by default, other modes through
+  `ARGS="..."`, the port through `PORT=...`. The board flow is `make program`, then
+  `make host`.
+- **README rewritten.** It still said 72 cycles, "not written yet" for `synth.tcl`, the XDC
+  and the host, and described a Vivado part-enumeration blocker fixed at M1. Every figure is
+  now copied from results.md, architecture.md or plan.md, and the status table uses plan.md's
+  stage labels. It adds a bring-up sequence and a troubleshooting table for a first
+  `--selftest` that fails.
+
+**Tests** (`models/nms/test_wire.py`, 11 tests, under a second, no serial port):
+- reply decoding and the reject cases;
+- the zero-mask rule and the `seq` wrap;
+- malformed-frame refusal;
+- by-id symlink resolution;
+- a missing port exiting 2 without a traceback.
+
+There is deliberately no fake serial link. The host is exercised on the real board.
+
+**Next, on hardware:** check the XDC pins against Digilent's master XDC, then `make program`.
+Then `--selftest` (expect 20/20), `--crc-test`, `--random 1000`, and `--latency 500` with the
+timer at 16 ms and at 1 ms. Record the measured round trip in results.md §6.

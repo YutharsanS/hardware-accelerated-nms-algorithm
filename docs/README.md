@@ -3,7 +3,7 @@
 The project is organized to separate hardware description (VHDL), software algorithmic modeling (Python), and automated verification.
 
 ```text
-bitonic-sorting-network-3dgs/
+hardware-accelerated-nms-algorithm/
 ├── deployment/       # Hardware constraints (e.g., .xdc files) and synthesis scripts for physical FPGA deployment.
 ├── docs/             # Technical documentation, architecture diagrams, and project reports.
 │   ├── development_guide.md  # Guidelines for branching, commit standards, and workflow.
