@@ -1,0 +1,65 @@
+{
+  "host": "PoseidonD",
+  "label": "i5-13500H",
+  "date": "2026-09-28",
+  "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+  "board": "",
+  "machine": "x86_64",
+  "affinity": [
+    2
+  ],
+  "commit": "a61b94b",
+  "dirty": false,
+  "python": "3.12.3",
+  "numpy": "2.5.2",
+  "torch": "2.14.0+cpu",
+  "torchvision": "0.29.0+cpu",
+  "opencv-python-headless": "5.0.0.93",
+  "ultralytics": "8.4.165",
+  "governor": "performance",
+  "freq_khz": "4316199",
+  "max_freq_khz": "4700000",
+  "vc_temp": "",
+  "vc_clock": "",
+  "vc_throttled": "",
+  "vc_temp_after": "",
+  "vc_clock_after": "",
+  "vc_throttled_after": "",
+  "valid": true,
+  "target": "cpu",
+  "load": "none",
+  "argv": [
+    "--target",
+    "cpu",
+    "--load",
+    "none",
+    "--port",
+    "/dev/ttyUSB1",
+    "--tag",
+    "run2"
+  ],
+  "skipped": [],
+  "impl_notes": {
+    "integer_sequential": {},
+    "integer_allpairs": {},
+    "numpy_allpairs": {},
+    "c_scalar": {
+      "flags": "-O3 -march=native",
+      "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "timer_overhead_ns": "10"
+    },
+    "torchvision": {
+      "threads": "1"
+    },
+    "opencv": {
+      "threads": "1"
+    }
+  },
+  "spec_vs_strict": {
+    "notebook32": 0,
+    "all_survive": 0,
+    "all_equal": 0,
+    "rand_seed0": 0,
+    "hostile": 199
+  }
+}

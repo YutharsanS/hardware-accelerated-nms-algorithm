@@ -89,7 +89,7 @@ def cpu_table(run: dict) -> str:
         (
             f"**{_machine(meta)}, load `{meta.get('load', '?')}`**, "
             f"{meta.get('date', '?')}, commit `{meta.get('commit', '?')}` "
-            "— median / p99 µs per NMS call"
+            f"— median / p99 µs per NMS call (`{run['stem']}`)"
         ),
         "",
         "| implementation | " + " | ".join(cases) + " |",

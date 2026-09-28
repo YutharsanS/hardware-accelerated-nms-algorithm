@@ -266,3 +266,44 @@ latency, pinned"). It is the figure a whole software NMS call is compared with.
 - the round trip at the FTDI default 16 ms timer (reproduce with
   `make host ARGS="--latency 500 --leave-latency-timer"` after resetting the timer);
 - T = 80 cycles on silicon, rather than in simulation (plan.md Phase E3, the ILA capture).
+
+---
+
+## 7. Software NMS on the laptop, idle (the reference row)
+
+`make bench` on the i5-13500H: `performance` governor, turbo at 4.3–4.7 GHz, pinned to CPU 2
+(a P-core), one thread, commit `a61b94b`. Every answer was checked before timing: our own
+variants against the golden model bit for bit, the libraries against the same algorithm with
+`>`. Median / p99 µs per NMS call ([benchmarks/results/](../benchmarks/results/),
+`cpu-PoseidonD-2026-09-28-none`):
+
+| implementation | notebook32 | all_survive | all_equal | rand_seed0 | hostile (1,000 cycled) |
+|---|---|---|---|---|---|
+| C, scalar, `-O3 -march=native` | **0.40 / 0.56** | 1.10 / 1.44 | 0.21 / 0.23 | 1.01 / 1.32 | 1.89 / 3.79 |
+| OpenCV `NMSBoxes` | 3.95 / 5.38 | 5.27 / 7.23 | 3.74 / 5.07 | 4.97 / 6.86 | 8.77 / 13.6 |
+| torchvision `ops.nms` | 15.5 / 21.2 | 16.1 / 21.8 | 15.3 / 24.6 | 15.9 / 23.0 | 17.7 / 27.1 |
+| numpy all-pairs | 36.0 / 49.4 | 51.7 / 68.1 | 32.5 / 50.4 | 48.5 / 66.7 | 49.0 / 69.3 |
+| **the block, 100 MHz, first record to `done`** | **1.13** | **1.13** | **1.13** | **1.13** | **1.13** |
+
+The block's figure is 113 cycles, pinned as an equality in simulation (§6); it is not yet
+captured on silicon. The pure-Python integer forms (40–880 µs) are in the CSV.
+
+**Repeatability:** a second run (`-run2`) put every median within 10% of the first. The
+largest difference was torchvision's +8.5%; C and OpenCV were within 6%.
+
+**What it shows:**
+- **Plain C on a 4.7 GHz laptop core beats the block on easy batches**: 0.40 µs on
+  `notebook32` against 1.13 µs. The clock advantage is 47×. plan.md E4 expected this.
+- **The block's claim is determinism.** C's median ranges 0.21–1.89 µs with the data, and its
+  hostile p99 is 3.79 µs. The block takes 1.13 µs for every batch. On the hostile stream it
+  beats even C, by 1.7× on the median and 3.4× on the p99.
+- **Against the libraries pipelines actually call**, the block is 3–8× faster than OpenCV
+  and 14–16× faster than torchvision on medians, and further ahead on the tails.
+- **Semantics:** on 199 of the 1,000 hostile batches, `>` (the libraries) and `>=` (the spec)
+  keep different boxes. The hostile stream is weighted towards exact-threshold pairs, so
+  that rate is higher than real data would give. OpenCV also breaks ties differently from
+  the spec, on 173 hostile batches, all with tied scores. torchvision matches the spec's
+  lower-index-first order everywhere.
+
+The Pi 5, the main competitor, is still to be run (plan.md E1/E2).
+
