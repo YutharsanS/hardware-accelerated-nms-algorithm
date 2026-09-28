@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `test/` — automated self-checking VHDL testbenches (unit and pipeline-level); does not exist yet, create it when adding the first testbench
 - `models/data/` — datasets and generated test vectors (I/O payloads) consumed by testbenches
 - `scripts/` — Makefiles and utility scripts (GHDL automation, Python formatters like Ruff/Black)
+- `benchmarks/` — Phase E evaluation scripts against competitor NMS implementations; results under `benchmarks/results/`
 - `deployment/` — hardware constraints (e.g., `.xdc` files) and synthesis scripts for physical FPGA deployment
 - `docs/development_guide.md` — the canonical GHDL/GTKWave workflow reference (see below)
 

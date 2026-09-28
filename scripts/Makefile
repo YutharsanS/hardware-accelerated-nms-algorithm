@@ -12,8 +12,13 @@
 #   make synth MOD=cas   Vivado out-of-context synthesis + implementation of one module
 #   make impl            Vivado implementation of nms_top on the real pins, plus a bitstream
 #   make program         load that bitstream onto a connected Basys 3 over JTAG
+#   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
+#   make bench           benchmark NMS against its competitors (docs/plan.md Phase E):
+#                        TARGET=cpu|fpga, LOAD=none|pipeline|concurrent|stress, PORT=...,
+#                        BENCH_ARGS="--impls c_scalar opencv --cases hostile"
+#   make bench-report    merge benchmarks/results/*.csv into Markdown tables
 #   make xsim TB=tb_x    the same testbench under Vivado xsim, as a second simulator
 #   make clean           remove build artefacts
 #
@@ -58,6 +63,7 @@ RTL = src/components/nms_pkg.vhd \
       src/components/frame_rx.vhd \
       src/components/frame_tx.vhd \
       src/pipeline/nms_core.vhd \
+      test/stubs/ila_core.vhd \
       src/pipeline/nms_top.vhd
 
 # Any RTL file not named above. Adding a module means declaring where it sits in the
@@ -127,14 +133,14 @@ PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the
 # 267 MB .ply under models/data is not a concern). Formatting is enforced only on .py
 # sources: reformatting notebook cells is churn that fights nbstripout for no benefit.
-PYLINT_SRC   = models
-PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs)
+PYLINT_SRC   = models benchmarks
+PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs) benchmarks
 
-.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host
+.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host bench bench-report ila
 .DEFAULT_GOAL := help
 
 help:
-	@echo "targets: test | test-full | lint | tb_hello | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | xsim TB=<tb> | clean"
+	@echo "targets: test | test-full | lint | tb_hello | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
 
 $(WORKDIR):
 	@mkdir -p $(WORKDIR)
@@ -219,10 +225,27 @@ xsim: $(RANDOM_BATCHES)
 # Full implementation of nms_top on the real part with deployment/basys3.xdc: synthesis,
 # place, route, timing and -- only if setup and hold both pass -- a bitstream.
 #   make impl [GENERICS="PIPE_CUTS=9"]
+#   make impl ILA=1      the same plus an ILA on the core handshake, into build/impl_ila/
+ILA ?=
 impl:
 	@command -v vivado >/dev/null 2>&1 || { \
 	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
-	vivado -mode batch -nolog -nojournal -source scripts/impl.tcl -tclargs $(GENERICS)
+	vivado -mode batch -nolog -nojournal -source scripts/impl.tcl -tclargs $(GENERICS) \
+	    $(if $(filter 1,$(ILA)),ILA)
+
+# Capture T on silicon (docs/plan.md Phase E, E3): program the ILA build from
+# `make impl ILA=1`, capture WINDOWS batches sent by the host, then check that every one
+# measures start -> done = T and draw the first as docs/images/onchip_latency.png.
+#   make ila [WINDOWS=16] [PORT=/dev/ttyUSB1]
+ILA_DIR ?= build/ila
+WINDOWS ?= 16
+ila:
+	@command -v vivado >/dev/null 2>&1 || { \
+	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
+	vivado -mode batch -nolog -nojournal -source scripts/ila.tcl \
+	    -tclargs $(ILA_DIR) $(WINDOWS) $(PORT)
+	$(PYTHON) --extra bench python -m benchmarks.onchip_latency --csv $(ILA_DIR)/ila.csv \
+	    --png docs/images/onchip_latency.png
 
 # Load build/impl/nms_top.bit onto a connected Basys 3 over JTAG (volatile: lost at power-off).
 # Then talk to it with:  uv run python -m models.nms.host --selftest
@@ -242,6 +265,30 @@ PORT ?= /dev/ttyUSB1
 ARGS ?= --selftest
 host:
 	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
+
+# Benchmark NMS against its competitors (docs/plan.md Phase E, E.4). The target names what
+# is measured and the results name which machine, so the same command runs on the laptop
+# or the Pi 5. Results land in benchmarks/results/<target>-<host>-<date>-<load>.*
+#   make bench                                    every software variant here, idle (E1)
+#   make bench LOAD=pipeline                      a YOLO inference before each call (E2)
+#   make bench TARGET=fpga PORT=/dev/ttyUSB1      the board over the UART, end to end
+# The cpu target pulls the `bench` extra (torch CPU, OpenCV); detector loads add
+# `bench-load` (ultralytics). The fpga target needs neither.
+TARGET     ?= cpu
+LOAD       ?= none
+BENCH_ARGS ?=
+ifeq ($(TARGET),cpu)
+  BENCH_EXTRAS = --extra bench $(if $(filter pipeline concurrent,$(LOAD)),--extra bench-load)
+endif
+bench:
+	$(PYTHON) $(BENCH_EXTRAS) python -m benchmarks --target $(TARGET) --load $(LOAD) \
+	    --port $(PORT) $(BENCH_ARGS)
+
+# Merge every run into the tables for docs/results.md; HIST=docs/images also draws the
+# E2 histograms (needs the bench extra for matplotlib).
+HIST ?=
+bench-report:
+	$(PYTHON) $(if $(HIST),--extra bench) python -m benchmarks.report $(if $(HIST),--hist $(HIST))
 
 synth:
 	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"]"; exit 1; }

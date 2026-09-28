@@ -30,6 +30,14 @@ So the claims are **core latency and determinism**: 80 cycles, identical for eve
 Part 1e.
 This matches [architecture.md §11](architecture.md).
 
+**Positioning, confirmed by E0 (2026-09-28):** a deterministic NMS IP block for a
+special-purpose FPGA edge-vision pipeline, sitting beside the detector in the fabric (for
+example next to a DPU on a Zynq or Kria), and demonstrated on a Basys 3. The target niche
+never sends more than 32 boxes to NMS, so **N ≤ 32 is an application constraint**, and
+scaling past it is out of scope. It is not presented as a co-processor that speeds up a host
+over the UART ([build_log.md](build_log.md) E0,
+[Phase E](#phase-e--evaluation-and-competitor-benchmarks)).
+
 > **Correction to an earlier revision**, whose version of these bullets read "868 µs versus the
 > CPU's 83 µs — a 10× regression … 20 µs/box … crossover N ≈ 600". Those are 3 Mbaud transport
 > figures set against a single-batch CPU timing that Part 1e itself withdrew. At the chosen
@@ -46,9 +54,14 @@ compute block is verified and measured ([results.md](results.md)). They are inte
 
 D1 is done too. The UART, `frame_rx` / `frame_tx` and the board top `nms_top` are verified at
 the pins. The full design meets 100 MHz on the real part (+0.200 ns) and a bitstream is built.
-D3's host program is written (`models/nms/host.py`, with `make program`), but not yet run on
-a board. Next is the first hardware run: `make program`, then `--selftest`. See the Part 3
-roadmap.
+D3 has run on the board (2026-09-28, [build_log.md](build_log.md)):
+- `--selftest` 20/20;
+- `--random 1000` 1000/1000 bit-exact against the golden model;
+- `--crc-test` passes;
+- UART round trip at the 1 ms latency timer: median 4.987 ms, p99 6.102 ms.
+
+**Next is Phase E0**, the feasibility gate: whether an N = 32 block meets a real need. Then the
+competitor benchmarks E1–E7 ([Phase E](#phase-e--evaluation-and-competitor-benchmarks)).
 
 **Worth 30 seconds at any point:** `source ~/Vivado/2026.1/Vivado/settings64.sh` then check
 `get_parts xc7a35tcpg236-1` returns 1. Every synthesis gate depends on it. If it ever returns 0,
@@ -432,6 +445,12 @@ honest claim is **"45–600× faster than Python (measured), ~40× faster than a
 ### Estimated baselines for other processor classes
 
 496 pairs × ~12 integer ops + a ~32-step serial resolve. **Estimates — measure before citing:**
+
+Phase E replaces these with measurements: the x86 scalar row at E4 and MicroBlaze at E6. The
+Pi 5's Cortex-A76 is added as a measured row at E1. Cortex-A53 and M7 stay estimates, because no
+board for them is planned. **The AVX2 row stays an estimate too:** the hand-written AVX2 variant
+was dropped on 2026-09-29, and the harness has one portable C variant, vectorised only by the
+compiler.
 
 | implementation | ~cycles | ~time |
 |---|---|---|
@@ -936,7 +955,10 @@ flowchart TD
   B5 -->|"LUT or timing fails"| FOLD
   FOLD --> B5
   B5 -->|"passes"| C1
+  E0{"E0 - feasibility gate<br/>is N = 32 needed?"}
+  E["E1-E7<br/>competitor benchmarks:<br/>Pi 5, ILA, laptop, literature,<br/>MicroBlaze, other parts post-route"]
   C1 --> C234 --> D
+  D --> E0 --> E
 ```
 
 **Execution scope is A, B and C1** — everything up to and including the gate that fixes `P`. The
@@ -1030,6 +1052,275 @@ identical `keep_mask`** on every A4 vector — that equivalence, plus the two `s
 turns Part 1a from estimate into measurement. Roughly a day, off the critical path. Decide once
 C4 lands and the sorter's real LUT count is known.
 
+### Phase E — evaluation and competitor benchmarks
+
+**Status: planned 2026-09-28, nothing run yet. Start at E0.** This section is written so that
+anyone can pick up the evaluation from here. It records what was decided, what the research
+found, the rules every measurement follows, and the stages in order.
+
+#### E.1 Why, and what is already decided
+
+The only measured baseline so far is our own Python on the dev laptop (Part 1e). That is a
+comparison an examiner can dismiss. Phase E measures the block against **real competitors**:
+- **Decided: the main competitor is a Raspberry Pi 5** (Cortex-A76 at 2.4 GHz; the team has one).
+  It runs the NMS that edge pipelines actually call:
+  - `torchvision.ops.nms`, which Ultralytics YOLO calls;
+  - `cv2.dnn.NMSBoxes`, which OpenCV DNN calls.
+- **Positioning, confirmed by E0 (N ≤ 32 by application):** a *deterministic NMS IP block for
+  FPGA edge-vision pipelines*. It sits beside the detector in the fabric (for example next to a
+  DPU on a Zynq or Kria), and is demonstrated on a Basys 3.
+  - It is **not** presented as a co-processor that speeds up a host over the UART. The link's
+    2.70 ms is longer than software NMS at N = 32, and [architecture.md §11](architecture.md)
+    stands.
+  - Inside the fabric, the block would replace the DDR → interrupt → software-NMS round trip
+    with a fixed number of cycles and no CPU involvement.
+
+#### E.2 Research findings so far
+
+Gathered by research agents on 2026-09-28. **Every item here is agent-sourced: open the link
+and verify it before citing.** The research on edge-CPU and Vitis AI post-processing cost was
+stopped before it finished, and is still open (E0).
+
+- **NMS-free detectors exist, but NMS is not obsolete.**
+  - YOLOv10's one-to-one head removes NMS. It reports YOLOv10-S end to end at **2.44 ms without
+    NMS against 7.07 ms with it** ([arXiv 2405.14458](https://arxiv.org/html/2405.14458v2)).
+  - The NMS-free heads cost accuracy on *small* models, which are the ones edge devices run:
+    −1.0 AP on YOLOv10-N and −0.6 to −0.8 mAP on YOLO26.
+  - **Ultralytics YOLO26's default (`nms=None`) still runs NMS**, and it falls back to NMS on
+    runtimes without a top-K operator (NCNN, RKNN)
+    ([Ultralytics end-to-end guide](https://docs.ultralytics.com/guides/end2end-detection),
+    [arXiv 2606.03748](https://arxiv.org/html/2606.03748v1)).
+  - YOLOv8 and YOLO11 need NMS. DETR-family models avoid it but are hard for edge NPU
+    compilers.
+- **Where NMS runs in deployment today:**
+  - **Vitis AI:** the DPU runs the CNN and the ARM core does the NMS. That is this block's
+    niche. The source found is a user project
+    ([dgvu/yolov8_segmention_croprow_dpu](https://github.com/dgvu/yolov8_segmention_croprow_dpu)),
+    not AMD documentation, so find a primary source.
+  - Coral Edge TPU runs `TFLite_Detection_PostProcess` on the CPU
+    ([coral#515](https://github.com/google-coral/edgetpu/issues/515)).
+  - Other vendors absorb NMS into their toolchains: TensorRT has a native `INMSLayer`
+    ([TensorRT plugin notes](https://github.com/NVIDIA/TensorRT/tree/main/plugin/efficientNMSPlugin)),
+    Hailo runs it in the compiled model
+    ([Ultralytics Hailo guide](https://docs.ultralytics.com/integrations/hailo)), and TI TIDL
+    runs it on a DSP or the A72
+    ([TIDL od_meta_arch](https://github.com/TexasInstruments/edgeai-tidl-tools/blob/master/docs/od_meta_arch.md)).
+  - **Verdict: still relevant, but a niche.** Standalone NMS IP has a thin market.
+- **How many boxes reach NMS:**
+  - YOLOv8 and YOLO11 produce 8,400 candidates at 640.
+  - Ultralytics defaults: `conf_thres=0.25, iou_thres=0.45, max_nms=30000, max_det=300`, then
+    `torchvision.ops.nms`. Class-aware NMS uses the offset trick `max_wh = 7680`
+    ([ultralytics/utils/nms.py](https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/utils/nms.py)).
+  - **No published count of boxes before NMS at deployment thresholds was found.** The agent
+    *estimates* 20–150 per COCO image, because each object produces several overlapping
+    detections. COCO averages ~7.3 objects per image
+    ([arXiv 1907.09408](https://arxiv.org/pdf/1907.09408)).
+  - RT-DETR measures NMS time falling from 2.36 ms to 1.06 ms as conf rises from 0.001 to 0.05
+    ([arXiv 2304.08069](https://arxiv.org/html/2304.08069v3)).
+- **Hardware NMS literature targets 1,000–8,000 boxes, and no design found uses N = 32.**
+  - "Scalable Hardware Acceleration of NMS" (DATE 2022) benchmarks n = 1,000 and 8,000, and
+    cites 1,000 boxes merged in 12.79 µs at 400 MHz
+    ([PDF](https://past.date-conference.com/proceedings-archive/2022/pdf/0239.pdf)).
+- **Classes:**
+  - The offset trick doesn't fit: 80 classes × 7,680 needs ~20-bit coordinates, which breaks
+    the frozen 64-bit record.
+  - Running one batch per class does fit, with no RTL change (§11). COCO averages ~2.9 classes
+    per image.
+- **The central tension (inference, not measured):**
+  - NMS costs milliseconds only at large N. The ms figures above all come from hundreds to
+    thousands of boxes.
+  - At N = 32, software NMS on a Pi is probably tens of µs.
+  - The all-pairs architecture doesn't scale either: T ≈ N²/P gives ~62,500 cycles (**~625 µs**)
+    at N = 1,000 and P = 16, about the same as software. The published large-N designs stream
+    or fold their sorters for this reason.
+  - **So whether a fixed N = 32 block meets any real need is an open question. E0 answers it.**
+  - **Resolved by scoping, not by data (E0, 2026-09-28):** the target niche guarantees
+    N ≤ 32, so large-N scaling is not a goal. The COCO counts landed on the criterion's
+    threshold (90.6% / 89.7%), and the decision does not rest on them.
+
+#### E.2a Board limits versus architecture limits
+
+The Basys 3 is the only hardware the team has, and several headline figures come from it rather
+than from the design. The report must say which is which. Otherwise any comparison can be
+dismissed with "that's just the Basys 3".
+
+| limit | what causes it | changes on a bigger or faster part? |
+|---|---|---|
+| **100 MHz** | The critical path on a −1 speed-grade Artix-7: `nms_top` closes at WNS +0.200 ns, 102.0 MHz ([results.md](results.md) §1). The 100 MHz oscillator isn't the ceiling, because an MMCM could multiply it. | **Yes:** the same 80 cycles in fewer ns |
+| **N = 32** | The device: the design takes 12,570 LUT (60.4%), and `bitonic32` alone takes 8,112 (39.0%). A combinational N = 64 sorter doesn't fit (§11). | **Partly:** a bigger part fits more boxes, but T = N²/P is the architecture's own scaling |
+| **P = 16** | The device: LUTs, DSPs (33 of 90), and routing at P = 32 | **Yes** |
+| **UART at 1 Mbaud** | The board: the FT2232HQ has no FIFO mode | **Yes:** gone entirely once the block is inside the fabric |
+| **No ARM or DDR** | The board | **Yes:** on a Zynq, the in-fabric argument could be measured rather than argued |
+| **80 cycles, independent of the data** | The architecture | **No:** this is what carries over to any part |
+
+**The claim that carries over is cycles and determinism. Nanoseconds are specific to the
+board.** E7 puts numbers on the "yes" rows without new hardware.
+
+#### E.3 Rules for every stage
+
+- **Compare compute only, and quote the core as two figures:**
+  - T = 80 cycles = 0.80 µs, from `start` to `done`;
+  - the block's full latency, from first record in to mask out: 32 load cycles (one record
+    per cycle through `we`), 1 settle cycle, and T. **113 cycles = 1.13 µs**, each part
+    pinned as an equality in `tb_nms_core` (2026-09-29).
+  - A library's whole NMS call is compared with the full-latency figure, not with T.
+- **Every core figure is quoted in cycles and in ns at a named clock.** For example:
+  - "80 cycles = 0.80 µs at 100 MHz (Basys 3, measured)";
+  - "80 cycles = X ns at Y MHz (E7, post-route, not run on silicon)".
+  - Comparisons with the Pi quote both the Basys 3 figure and E7's best case, each labelled.
+- **Agreement is checked, not just timing:**
+  - Our C variants must match `model.nms_sequential` exactly.
+  - OpenCV and torchvision suppress when IoU **>** threshold; our spec uses **≥**
+    ([architecture.md §5](architecture.md)). They are checked against a reference that uses
+    `>`.
+  - Tie order is reported, not hidden. Any other mismatch fails.
+  - **Measured on the laptop (2026-09-29), the opposite of what this plan assumed:**
+    torchvision matches our lower-index-first tie order on all 1,004 batches. OpenCV
+    disagrees on 173 hostile batches, all with tied scores, so OpenCV breaks ties
+    differently. The harness reports these as `explained ties=173`, not as a failure.
+  - The difference in semantics is itself a report finding.
+- **Statistics:** report min, median, p99 and max, never a single mean. Name the processor and
+  clock on every row.
+- **Inputs:**
+  - the four `bench.benchmark_suite` cases (`notebook32`, `all_survive`, `all_equal`,
+    `rand_seed0`);
+  - cycling through `batches.hostile_stream(1000)`, so that a repeated batch can't flatter the
+    branch predictor;
+  - library inputs prepared outside the timed call, in each library's native format (tensors
+    for torchvision).
+- **Runs:**
+  - Pin with `taskset`: a P-core on the i5-13500H, which mixes P- and E-cores.
+  - Every result row carries metadata: commit, CPU, frequency, governor, temperature, library
+    versions.
+  - **The Pi 5 has its active cooler fitted.** Log `vcgencmd measure_temp`, `measure_clock arm`
+    and `get_throttled` with every run. A run with the throttled flag set is invalid.
+
+#### E.4 The harness: `benchmarks/` and `make bench`
+
+Built at E1 and used by every later stage.
+
+**Built 2026-09-29** ([build_log.md](build_log.md) E1). Tested on the laptop; not yet run on
+the Pi.
+
+```
+benchmarks/                 Python package, covered by ruff and pytest (make lint, make test)
+  __main__.py               python -m benchmarks --target {cpu,fpga} [--load ...] (make bench)
+  inputs.py                 the input groups, and the `>` reference the libraries are checked against
+  meta.py                   machine metadata; a Pi run that throttled is marked invalid
+  report.py                 merges results into the tables for results.md (make bench-report)
+  test_harness.py           references, C bit-exactness, a fake board, a whole run
+  targets/
+    cpu.py                  software NMS on this machine: integer, numpy, C, torchvision, OpenCV
+    fpga.py                 the Basys 3 over the UART, end to end, from this machine
+  workloads/
+    detector.py             YOLO inference: in-process (pipeline) or as a worker (concurrent)
+    background.py           starts the concurrent detector or stress-ng on the other cores
+  c/
+    nms_bench.c             the C variant, timed inside C (portable scalar; no hand-written SIMD)
+  feasibility/              the one-off study run before the benchmarks (E0)
+    count_boxes.py          how many boxes YOLO sends to NMS on COCO val2017
+    time_vs_boxes.py        software NMS time against N
+    summarise.py            the decision figures and docs/images/nms_time_vs_boxes.png
+  results/                  <target>-<host>-<date>-<load>.{csv,json} + -samples.csv.gz, committed
+    feasibility/            the feasibility study's counts and timings
+```
+
+- **The command:** `make bench TARGET=cpu|fpga [LOAD=none|pipeline|concurrent|stress]
+  [PORT=...]`, plus `make bench-report`.
+  - It follows the Makefile's `VAR=` convention, like `make host PORT=...`. `TARGET` and `LOAD`
+    are not used anywhere else in the Makefiles.
+  - The target names **what** is measured; the CSV records **which machine**. The same command
+    runs on the laptop or on the Pi (clone the repo there). There is deliberately no ssh
+    target, because it would be fragile and save one command.
+- **The C variant is timed inside C.** A Python → C call costs ~1 µs, which would swamp a
+  ~0.2 µs answer. It is built as a shared library (`build/bench/libnmsbench.so`, rebuilt
+  when the source changes) and called through ctypes. Each call reads the clock itself, so
+  the ctypes overhead falls outside the timed region. The cost of the two clock reads is
+  recorded with the results (32 ns on the laptop).
+- **`TARGET=fpga` measures the full system, not compute.** Its rows sit in the same table,
+  in their own "end to end" column, and are never set against a compute time. Side by side,
+  the three figures make the positioning argument by themselves:
+  - Pi software (µs);
+  - UART system (~5 ms median today);
+  - the core (~1 µs).
+- **Reused, not copied:**
+  - `models/nms/bench.py` provides `float_reference`, `numpy_allpairs` and `cpu_name`. It also
+    now provides `time_samples` and `summarise`, added beside `_time` rather than changing it. The file stays where it is, because its tests and the
+    build log refer to it.
+  - `models/nms/host.py` provides `Board` and `set_latency_timer`. `run_latency` is split into a
+    `measure_latency` that returns the samples, plus the existing printer, so `make host`
+    behaves exactly as before.
+- **Dependencies:**
+  - an optional `bench` extra: `torchvision`, `torch` from the CPU wheel index (to avoid the CUDA
+    download) and `opencv-python-headless`;
+  - an optional `bench-load` extra: `ultralytics`.
+  - Core dependencies don't change, so CI stays light. Tests that need an extra skip when it's
+    absent.
+- **CLAUDE.md:** when `benchmarks/` is created, add it to the repository-structure list.
+
+#### E.5 Stages
+
+| stage | what | gate / output | cost | status |
+|---|---|---|---|---|
+| **E0** | **Feasibility gate.** <br>• **Script 1:** YOLOv8n and YOLO11n at 640 on 500 COCO **val2017** images (not `coco128`, which comes from the training set and would flatter the confidence scores). Take the raw head output before NMS and count candidates above conf 0.10, 0.25 and 0.50, per image and **per (image, class)**. Also count after NMS, for the duplicate ratio. <br>• **Script 2:** software NMS time against N ∈ {8, 16, 32 … 4096, 8400} for torchvision, OpenCV and our `numpy_allpairs`, on the laptop and then the Pi 5. Use real candidate sets where available and clustered synthetic boxes beyond. Plot against the block's T(N) = N²/P + L + I + C + 2 plus load cycles (a lower bound for N > 32, because C is held at 8), and against the published 1,000-box point. <br>• **Finish the stopped research:** how long post-processing takes on edge CPUs and next to Vitis AI's DPU. <br>• Run in a scratch venv first; the scripts move into `benchmarks/` if Phase E proceeds. | The decision table below, applied. Build-log entry "E0 — feasibility", plus the plot in `docs/images/`. | ~½ day + a Pi run | **Decided 2026-09-28: N ≤ 32 by application**; E1–E7 unblocked. The Pi run at N ≤ 32 is still open ([build_log.md](build_log.md)) |
+| **E1** | **Pi 5, idle.** torchvision, OpenCV, numpy and integer Python, and C `-O3 -mcpu=cortex-a76` (NEON left to the compiler). Build the harness here, including `targets/fpga.py`, which is mostly reuse of `host.py`. The first merged table then already shows Pi software, the UART system and the core side by side. | C bit-exact; libraries agree as defined in E.3; two runs within ~10% | ~1 day | Required. **Harness built and tested on the laptop 2026-09-29; the Pi run is postponed** |
+| **E2** | **Pi 5 under load, the main result.** <br>• `LOAD=pipeline`, the main condition: YOLO inference, then NMS, per frame, in one process, which is how a real pipeline runs. Time the NMS call each frame. <br>• `LOAD=concurrent`: YOLO in a separate process, measuring contention for the shared cache and memory. <br>• `LOAD=stress`: a `stress-ng` memory load. <br>Report the distribution and a histogram. | the spread of p99 and max against the core's fixed cycle count: the determinism claim, measured | ~1 day | Required. **All three loads built and smoke-tested on the laptop; the Pi runs are postponed** |
+| **E3** | **On-chip proof of T.** An ILA on the core handshake (`start`, `done`, `busy`, `settled`, `we`), built with `make impl ILA=1` into `build/impl_ila/`. `make ila` programs it, captures 16 windows (one per random batch, triggered on `start`), and `benchmarks/onchip_latency.py` checks every window measures `start` → `done` = T and draws the first. **The BASIC licence refuses `create_debug_core`**, so the ILA is the catalogue IP, instantiated by an `ILA` generic in `nms_top` (default `false`: production netlist unchanged). No change to the datapath or the wire protocol. | T = 80 cycles in every window, on silicon; `docs/images/onchip_latency.png` | ~2 h | Required. **Built 2026-09-29, meets timing (WNS +0.245 ns); capture waits for the board** |
+| **E4** | **Laptop reference row.** E1's harness on the i5-13500H, with the `performance` governor (E0 saw 1.7× run-to-run drift under `powersave`). Replaces the x86 scalar estimate in Part 1e; the AVX2 variant was dropped (2026-09-29). | expected to beat the core on raw time, and the report says so | ~½ day | Required |
+| **E5** | **Literature table.** 3–5 hardware NMS designs, giving N, clock, latency, LUT, DSP and device. Normalise to µs per batch and cycles per box pair where the paper allows, and write "not comparable" where it doesn't. Also look for published support for the in-fabric argument. | the table in results.md | ~½ day | Required |
+| **E6** | **MicroBlaze in the same fabric.** The same C on the XC7A35T at 100 MHz, in its own project under `deployment/microblaze/`, so `nms_top` is untouched. Count cycles with an AXI timer and report over the UART. Report **per LUT** as well: a MicroBlaze is ~1–2k LUT against our 12,570. | `keep_mask` matches on the four cases; replaces the ~124 µs estimate | ~2–3 days | Optional |
+| **E7** | **The same RTL on other parts, post-route, no board needed.** <br>• Add a `PART=` option to `scripts/synth.tcl`, keeping `xc7a35tcpg236-1` as the default so existing results don't change, and pass it through `make synth MOD=nms_core PART=... PERIOD=...`. <br>• Run `nms_core` out of context on: `xc7a35t` at speed grades −1, −2 and −3 (the same die, showing this family's headroom); `xc7z020-1` (a PYNQ-Z2-class Zynq-7000 with an A9 and DDR: the realistic in-fabric target that is installed); and `xc7k325t-2` (Kintex-7: more resources, faster fabric). <br>• For each, at P = 16 and at P = 32 where it fits: Fmax (sweep `PERIOD` down to WNS < 0, or report 1 / (period − WNS)), LUT, FF, DSP, and T in ns. <br>• Optional: Zynq UltraScale+ (the Kria XCK26) is **not installed**. Add it only after checking that the BASIC licence tier enables it (M1: the licence gates devices). <br>• Not in E7: N > 32. That needs a new `nms_pkg`, a new sorter size and new vectors, so it is architecture future work, not a change of board. | every figure post-route, naming the part and speed grade, and labelled **not run on silicon** | ~½ day, mostly batch runs | **Required**: answers "is it just the Basys 3?" |
+
+**E0 decision criteria (decided).** These were fixed before any data exists, so the conclusion
+can't be adjusted to suit the data afterwards:
+
+| finding | conclusion |
+|---|---|
+| ≥ 90% of (image, class) batches have ≤ 32 boxes at conf 0.25 | N = 32 is realistic, given a host-side conf filter, top-32 selection and one batch per class. The edge-IP positioning stands. |
+| < 90% | N = 32 is too small for real scenes. The report presents the block as a **demonstrator of the architecture**, with larger N (a folded or streaming sorter) as the headline future work. E1–E7 still run, framed that way. |
+| Pi 5 software NMS at the typical N < ~50 µs, with a small spread | there is no speed case; the claims are determinism, CPU offload and the demonstrator |
+| Pi 5 software NMS at the typical N ≥ ~1% of a 33 ms frame, or with a wide spread | a real in-fabric case exists at that N |
+| where the software curve crosses the block's | the N range where hardware is worth having. This sets the future-work target, and says whether this architecture could reach it. |
+
+The rows comparing Pi 5 software with the block are evaluated at the Basys 3 clock **and** at
+E7's best measured clock. The conclusion states which one it used.
+
+**Outcome (2026-09-28).** The ≤ 32 criterion came out on its threshold, at 90.6% for YOLOv8n
+and 89.7% for YOLO11n. It was then superseded by an application decision: the target niche
+guarantees N ≤ 32, so the edge-IP positioning stands. The Pi rows are evaluated at
+N = 8, 16 and 32 only.
+
+#### E.6 Doubts the report must state
+
+- **The Pi 5 is a tougher competitor than the realistic alternative.** The ARM next to the
+  fabric on a real FPGA SoC is a Cortex-A53 (Kria) or A9 (Zynq-7000), both far slower than the
+  A76, so the comparison is conservative. The A53 estimate in Part 1e stays for reference.
+- **The in-fabric argument is reasoning, not measured.** There is no Zynq, so the claim that the
+  DDR → interrupt → software round trip costs more than the block is argued, not shown. E5
+  looks for published support.
+- **Licensing:** Ultralytics and the YOLOv8/11 weights are AGPL-3.0. That's acceptable for an
+  optional benchmark load that is not redistributed.
+- **One class per batch.** Multi-class detection runs one batch per class
+  ([architecture.md §11](architecture.md)).
+- **N ≤ 32 is an assumption of the target niche.** Generic COCO scenes exceed it in about 10%
+  of per-class batches, and cutting those to the top 32 drops about 11% of keepers (E0).
+
+- **E7 figures are post-route static timing, not measured on silicon.** They are the same kind
+  of evidence as every timing figure in results.md before D3, but only the Basys 3 numbers are
+  hardware measurements. A PYNQ-Z2 or similar Zynq-7000 board, if the team can borrow one, would
+  let the in-fabric argument be measured.
+
+#### E.7 Out of scope, with reasons
+
+- **A BRAM-replay bench top.** D3 already computed 1,000 batches at 100 MHz on silicon (the
+  UART only delivers the data), and a start-to-done counter would measure the FSM against
+  itself. E3's ILA gives the on-chip proof more cheaply.
+- **GPU:** none is available, and at N = 32 kernel-launch overhead would decide the result.
+- **Vitis HLS of the same algorithm:** it costs as much as E6 and says less.
+- **torchvision on the laptop as a headline row:** it runs in E4, but its dispatch overhead
+  dominates at N = 32.
+- **Any claim that the UART system speeds up the Pi.**
+
 ### Evidence triage — the report work now rivals the RTL in size
 
 Fair criticism of this plan: it has accumulated a lot of measurement work, and unbudgeted that could
@@ -1044,7 +1335,14 @@ exceed the RTL effort. Explicit triage so it does not silently expand:
 | Cycle-count assertion (C4) | ~1 h | **Required** — checks the determinism claim |
 | xsim cross-check at C4 | ~4 h | **Required** — two independent simulators agreeing is the L6 mitigation |
 | Argmax A/B (C5) | ~1 day | **Optional**, decided after C4 |
-| MicroBlaze head-to-head | ~2 days | **Optional stretch** — cost dropped: **Vitis is installed alongside Vivado**, so the software toolchain is no longer a blocker. Upgrades the claim; does not establish it |
+| E0 feasibility gate | ~½ day + a Pi run | **Decided 2026-09-28**: N ≤ 32 by application; the Pi run at N ≤ 32 is still open |
+| E1 Pi 5 idle + `benchmarks/` harness | ~1 day | **Required** — the main competitor. Harness built 2026-09-29; Pi run postponed |
+| E2 Pi 5 under load | ~1 day | **Required** — the determinism claim, measured. Loads built; Pi runs postponed |
+| E3 ILA capture of T on silicon | ~2 h | **Required** — built; the capture needs the board |
+| E4 laptop reference row (C scalar) | ~½ day | **Required** — replaces the x86 scalar estimate |
+| E5 literature table | ~½ day | **Required** |
+| E7 the same RTL on other parts, post-route | ~½ day | **Required** — separates the Basys 3 limits from the architecture's |
+| E6 MicroBlaze head-to-head | ~2–3 days | **Optional stretch** — cost dropped: **Vitis is installed alongside Vivado**, so the software toolchain is no longer a blocker. Upgrades the claim; does not establish it. Report per LUT as well as per batch |
 | Folded sorter | ~2 days | **Contingent** — only if B4/B5 fail |
 
 **Proposal corrections.** The `.tex` stays outside the repo (reference only), so A6 ends with a

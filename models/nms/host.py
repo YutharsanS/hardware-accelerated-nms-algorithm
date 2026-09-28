@@ -275,6 +275,49 @@ def run_random(board: Board, count: int, seed: int) -> bool:
     return failures == 0
 
 
+class LatencyError(RuntimeError):
+    """A timed round trip failed: a timeout, a bad reply, or a wrong ``keep_mask``."""
+
+
+def measure_latency(
+    board: Board,
+    count: int,
+    work: list[tuple[list[model.Box], int, int]] | None = None,
+) -> list[float]:
+    """Time round trips, checking every answer, and return the samples.
+
+    Args:
+        board: The connected board.
+        count: Number of round trips.
+        work: ``(boxes, present_mask, expected keep_mask)`` batches, cycled in order.
+            Defaults to the notebook anchor alone.
+
+    Returns:
+        Round-trip times in milliseconds, in call order.
+
+    Raises:
+        LatencyError: On the first round trip that times out, is rejected, or answers
+            wrongly.
+    """
+    if work is None:
+        boxes = list(batches.NOTEBOOK_32)
+        mask = (1 << p.N) - 1
+        work = [(boxes, mask, model.nms_allpairs(boxes, mask))]
+    times_ms: list[float] = []
+    for k in range(count):
+        boxes, mask, want = work[k % len(work)]
+        start = time.perf_counter()
+        try:
+            got = board.transact(boxes, mask)
+        except (ReplyTimeout, wire.ReplyError) as exc:
+            raise LatencyError(str(exc)) from exc
+        times_ms.append((time.perf_counter() - start) * 1e3)
+        if got.keep_mask != want:
+            msg = f"wrong keep_mask {got.keep_mask:#010x}"
+            raise LatencyError(msg)
+    return times_ms
+
+
 def run_latency(board: Board, count: int, timer: int | None) -> bool:
     """Time round trips of one fixed batch and print the distribution.
 
@@ -286,21 +329,11 @@ def run_latency(board: Board, count: int, timer: int | None) -> bool:
     Returns:
         Whether every round trip completed correctly.
     """
-    boxes = list(batches.NOTEBOOK_32)
-    mask = (1 << p.N) - 1
-    want = model.nms_allpairs(boxes, mask)
-    times_ms: list[float] = []
-    for _ in range(count):
-        start = time.perf_counter()
-        try:
-            got = board.transact(boxes, mask)
-        except (ReplyTimeout, wire.ReplyError) as exc:
-            print(f"latency: FAIL -- {exc}")
-            return False
-        times_ms.append((time.perf_counter() - start) * 1e3)
-        if got.keep_mask != want:
-            print(f"latency: FAIL -- wrong keep_mask {got.keep_mask:#010x}")
-            return False
+    try:
+        times_ms = measure_latency(board, count)
+    except LatencyError as exc:
+        print(f"latency: FAIL -- {exc}")
+        return False
     times_ms.sort()
     p99 = times_ms[min(len(times_ms) - 1, round(0.99 * (len(times_ms) - 1)))]
     timer_txt = f"{timer} ms" if timer is not None else "unknown"

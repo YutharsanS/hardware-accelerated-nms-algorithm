@@ -234,9 +234,35 @@ them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 ch
 
 ---
 
-## 6. Not yet measured
+## 6. On the board
 
-Every block is now built. The compute core and the full board design are measured as wholes
-(§1 and §5), including the routing between blocks. What remains unmeasured is hardware: the
-design has not yet run on a Basys 3, so real USB round-trip latency (plan.md Part 1b) is still
-unknown.
+The D1 bitstream (`build/impl/nms_top.bit`: P = 16, `PIPE_CUTS` = 8, I = 2) was run on a Basys 3
+on 2026-09-28 and checked from the host over the FT2232HQ UART with `make host`
+([build_log.md](build_log.md) D3). No RTL or host change was needed.
+
+| check | result |
+|---|---|
+| `--selftest` | **20/20** committed frames byte-exact, including every edge case |
+| `--crc-test` | pass: status `0x01`, mask `0x00000000` |
+| `--random 1000` | **1000/1000** batches bit-exact against the golden model |
+
+**Round trip**, `--latency 500`, FTDI latency timer at 1 ms:
+
+| min | median | p99 | max | wire time alone |
+|---|---|---|---|---|
+| 3.468 ms | **4.987 ms** | 6.102 ms | 6.591 ms | 2.70 ms |
+
+The core takes 0.80 µs of this, about 0.02%, which is below the resolution of the measurement.
+The excess over wire time is on the host side: USB full-speed polling, the FTDI latency timer and
+OS scheduling. That is inferred, not separately measured. The figure measures the test harness
+and not the accelerator, as [architecture.md](architecture.md) §11 says it would.
+
+**The core's full latency, from the first record in to `done`, is 113 cycles = 1.13 µs:**
+32 load cycles, 1 settle cycle for the last box's area, and T = 80. `tb_nms_core` pins each
+part as an equality on every batch, in simulation ([build_log.md](build_log.md), "Full
+latency, pinned"). It is the figure a whole software NMS call is compared with.
+
+**Still not measured:**
+- the round trip at the FTDI default 16 ms timer (reproduce with
+  `make host ARGS="--latency 500 --leave-latency-timer"` after resetting the timer);
+- T = 80 cycles on silicon, rather than in simulation (plan.md Phase E3, the ILA capture).

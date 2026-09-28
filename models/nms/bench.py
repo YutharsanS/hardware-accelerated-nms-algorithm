@@ -18,6 +18,7 @@ than a CPU" claim is not supportable: see ``docs/build_log.md`` and the plan's P
 from __future__ import annotations
 
 import platform
+import statistics
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -200,6 +201,56 @@ def _time(fn: Callable[[], int], *, budget_s: float = 0.4) -> tuple[float, int]:
         runs += 1
     elapsed = time.perf_counter() - start
     return (elapsed / max(runs, 1) * 1e6, result)
+
+
+def time_samples(
+    fn: Callable[[int], float],
+    *,
+    budget_s: float = 0.5,
+    min_samples: int = 50,
+    max_samples: int = 5_000,
+) -> list[float]:
+    """Time single calls and keep every sample, for a distribution rather than a mean.
+
+    ``fn(k)`` performs call number ``k`` and returns its own duration in microseconds, so
+    an implementation that times itself -- C, which a Python clock would swamp -- fits the
+    same loop as one timed from Python. Passing ``k`` lets the caller cycle its inputs.
+
+    Args:
+        fn: Performs call ``k`` and returns its duration in microseconds.
+        budget_s: Approximate wall time to spend, once ``min_samples`` are taken.
+        min_samples: Fewest samples to take whatever the budget.
+        max_samples: Most samples to take.
+
+    Returns:
+        Per-call durations in microseconds, in call order.
+    """
+    samples: list[float] = []
+    start = time.perf_counter()
+    while len(samples) < max_samples and (
+        len(samples) < min_samples or time.perf_counter() - start < budget_s
+    ):
+        samples.append(fn(len(samples)))
+    return samples
+
+
+def summarise(samples: list[float]) -> dict[str, float]:
+    """Return min, median, p99 and max: never a mean alone (plan.md Phase E, E.3).
+
+    Args:
+        samples: Durations, any unit.
+
+    Returns:
+        ``min``, ``median``, ``p99`` and ``max``, in the unit given.
+    """
+    ordered = sorted(samples)
+    p99 = ordered[min(len(ordered) - 1, round(0.99 * (len(ordered) - 1)))]
+    return {
+        "min": ordered[0],
+        "median": statistics.median(ordered),
+        "p99": p99,
+        "max": ordered[-1],
+    }
 
 
 def cpu_name() -> str:

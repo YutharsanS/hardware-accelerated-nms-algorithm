@@ -1297,3 +1297,339 @@ There is deliberately no fake serial link. The host is exercised on the real boa
 **Next, on hardware:** check the XDC pins against Digilent's master XDC, then `make program`.
 Then `--selftest` (expect 20/20), `--crc-test`, `--random 1000`, and `--latency 500` with the
 timer at 16 ms and at 1 ms. Record the measured round trip in results.md §6.
+
+---
+
+### D3 — first run on the board: bit-exact on hardware                   2026-09-28
+
+**Passed on the first attempt.** The `nms_top` bitstream from D1 (`build/impl/nms_top.bit`,
+built 2026-09-25: P = 16, `PIPE_CUTS` = 8, I = 2) was loaded onto a Basys 3 and checked from
+the host over `/dev/ttyUSB1`. It passed every check with no RTL or host changes.
+
+| check | result |
+|---|---|
+| `make program` | xc7a35t found over JTAG (Digilent cable), DONE = 1 |
+| `--selftest` | **20/20** committed frames answered byte-exact, including the anchor `notebook32` → `0xE1010101` |
+| `--crc-test` | pass: status `0x01`, mask `0x00000000` |
+| `--random 1000` | **1000/1000** batches bit-exact against the golden model |
+| `--latency 500`, timer 1 ms | min **3.468**, median **4.987**, p99 **6.102**, max **6.591 ms** |
+
+The selftest covered every edge-case frame on silicon: `none_present` → `0x00000000`,
+`degenerate`, `boundary`, `ties`, `partial_present` and `all_equal`. The same frames were
+already verified at the pins in D1's `tb_nms_top`. They now also pass through the real
+FT2232HQ, the XDC pinout and the placed-and-routed netlist.
+
+#### Latency: the round trip measures the harness, not the core
+
+The prediction was 2.70 ms of wire time (264 + 6 bytes at 1 Mbaud, 8N1). The minimum round
+trip is 0.77 ms above that. The median is 2.29 ms above it. The core accounts for 0.80 µs of
+this, about 0.02%, which is below the resolution of the measurement. The rest is on the host
+side. This is inferred, not separately measured: full-speed USB is polled once per 1 ms frame,
+the FTDI latency timer can hold the 6-byte reply for up to 1 ms, and Python/OS scheduling
+explains the spread between min and p99. This confirms architecture.md §11: the report
+presents core latency and determinism, not system speedup.
+
+The planned comparison at the FTDI default 16 ms timer was **not run**. The udev rule below
+set 1 ms before the timed run. To reproduce it, use
+`make host ARGS="--latency 500 --leave-latency-timer"` after resetting the timer to 16.
+
+#### The XDC, re-derived from Digilent's master
+
+D3's open item was to check the hand-written XDC pins against the master file.
+`deployment/basys3.xdc` is now Digilent's `Basys-3-Master.xdc` (Rev. B) verbatim, with only
+the used lines uncommented: `clk` W5 and its `create_clock`, `btnC` U18, `RsRx` B18, `RsTx`
+A18, and `led[0..15]`. The false-path block follows at the end. Every pin in the old file
+matched the master and the port names were already Digilent's, so the active constraints
+are unchanged and the D1 bitstream was not rebuilt.
+
+#### Host setup, once per machine
+
+These took most of the session, so they are recorded here. The README's bring-up section
+should carry them too.
+- **Serial permission:** `sudo usermod -aG dialout $USER`. It takes effect only in a new
+  login session. `id -nG` in the old shell will not show it, but `getent group dialout`
+  will.
+- **JTAG:** Vivado's cable drivers, `sudo ./install_drivers` in
+  `~/Vivado/2026.1/data/xicom/cable_drivers/lin64/install_script/install_drivers`, then
+  replug the board.
+- **Finding the board:** `lsusb | grep -i ftdi` finds nothing, because the vendor string is
+  "Future Technology Devices International". Use `lsusb | grep 0403` and expect `0403:6010`.
+  The board appears as `ttyUSB0` (JTAG) and `ttyUSB1` (UART).
+- **Latency timer:** a udev rule makes 1 ms persistent across replugs:
+  `/etc/udev/rules.d/99-ftdi-latency.rules` containing
+  `ACTION=="add", SUBSYSTEM=="usb-serial", DRIVER=="ftdi_sio", ATTR{latency_timer}="1"`.
+  The host program then reports `latency timer: 1 ms` without needing `sudo`.
+- **After a power cycle:** the bitstream is volatile, so run `make program` again.
+
+**Next:** record the round-trip figures in results.md §6, which still says "not yet
+measured", and update plan.md's status paragraph. Optionally, run `--latency` at the 16 ms
+timer for the comparison. Then D2's P-sweep.
+
+---
+
+### E0 — feasibility: N ≤ 32 by application; candidate counts, laptop timings 2026-09-28
+
+**Status: decided; the Pi 5 run at N ≤ 32 is still open.** Scripts are in
+`benchmarks/feasibility/`. They were run from a scratch venv (torch 2.14 CPU, torchvision 0.29,
+OpenCV 5.0, ultralytics 8.4.164), as planned. Outputs are in `benchmarks/results/feasibility/` and the
+plot is [images/nms_time_vs_boxes.png](images/nms_time_vs_boxes.png).
+
+#### How many boxes reach NMS
+
+YOLOv8n and YOLO11n were run at a fixed 640 × 640 letterbox (8,400 anchors) on 500 COCO
+val2017 images. The images are the first 500 entries of `val2017.zip`, whose order is not by
+image id. Each anchor keeps its best class, as `predict` does. A batch is one (image, class)
+pair, because multi-class NMS runs one batch per class
+([architecture.md](architecture.md) §11).
+
+The extraction was checked against Ultralytics' own `non_max_suppression` on the same tensor,
+and the survivor counts match. `predict`'s default rectangular letterbox gives slightly
+different counts, because it uses fewer anchors. Fixed 640 × 640 is what an exported edge
+model runs.
+
+| conf > 0.25 | YOLOv8n | YOLO11n |
+|---|---|---|
+| boxes per image: median / p90 / max | 23.5 / 72 / 184 | 27 / 75 / 172 |
+| images with ≤ 32 boxes | 61.8% | 57.8% |
+| (image, class) batches | 1,196 | 1,182 |
+| boxes per batch: median / p90 / p99 / max | 10 / 31 / 85 / 135 | 10 / 33 / 83 / 128 |
+| **batches with ≤ 32 boxes (the E0 criterion)** | **90.6%** | **89.7%** |
+| batches unchanged by keeping the top 32 | 93.2% | 93.1% |
+| keepers lost by keeping the top 32 | 11.4% | 10.9% |
+| candidates per survivor (IoU 0.45) | 7.2 | 7.4 |
+
+At conf 0.10 the share of batches with ≤ 32 boxes falls to 88.4% and 86.7%. At conf 0.50 it
+rises to 93.8% and 92.8%.
+
+**The criterion lands on its threshold.** The binomial standard error at ~1,190 batches is
+about ±0.9 points, so 90.6% and 89.7% can't be told apart from 90%.
+
+The two truncation rows were not in the fixed criterion. They are recorded as supplementary
+evidence, not as a replacement for it. Greedy NMS decides each box from higher-scoring boxes
+only, so a top-32 truncation keeps exactly the full result's keepers among the top 32 ranks.
+What it loses is concentrated in crowded scenes: 93% of batches come through unchanged, yet
+about 11% of all keepers are dropped.
+
+#### Decision (2026-09-28): N ≤ 32 by application
+
+The team has decided. The target is a special-purpose niche in which at most 32 boxes ever
+reach NMS. **N = 32 is therefore a requirement of the application, and COCO does not have
+to prove it.** The criterion's borderline result doesn't decide anything. The edge-IP
+positioning stands. Scaling past 32 is not pursued by E0 or any later stage.
+
+The counts above stay in the log as context. They show why the report must name the
+constraint: generic COCO scenes exceed 32 boxes in about 10% of per-class batches. So
+"N ≤ 32" is stated as an assumption of the niche, not as a property of detection in general.
+
+#### Software NMS time, laptop
+
+i5-13500H, pinned to CPU 2 (a P-core) with `taskset`, governor `powersave` at 3.8 GHz, one
+thread. The inputs are the top N anchors of 50 real images, cycled per call. IoU is 0.5, the
+block's threshold.
+
+| N | torchvision median / p99 | OpenCV median / p99 | `numpy_allpairs` median / p99 | block, load included |
+|---|---|---|---|---|
+| 8 | 17.5 / 26.5 µs | 1.4 / 2.0 µs | 20.2 / 29.7 µs | **1.13 µs** |
+| 16 | 17.5 / 30.4 µs | 2.4 / 4.1 µs | 26.5 / 57.4 µs | **1.13 µs** |
+| 32 | 17.4 / 26.6 µs | 4.5 / 12.8 µs | 38.8 / 50.6 µs | **1.13 µs** |
+
+**The block's latency is the same at every N ≤ 32.** A batch is always 32 slots, with absent
+ones masked by `present_mask`. The latency is 32 load cycles (one record
+per cycle), 1 settle cycle and T = 80: 113 cycles, 1.13 µs at 100 MHz. That figure was
+measured the next day (see "Full latency, pinned" below); this entry first said 1.12 µs,
+which omitted the settle cycle. An earlier draft of the plot drew N²/P below 32, which the
+hardware doesn't do.
+
+**The laptop's clock is not stable between runs.** A repeat run the same evening measured
+torchvision at 29.8 µs and OpenCV at 7.7 µs at N = 32, about 1.7× slower. The `powersave`
+governor sets the frequency. E1 requires two runs within about 10%, so fix the governor
+(`performance`) before E4 quotes any laptop row.
+
+- **torchvision and OpenCV agree on every image at every N**, with tie order included.
+- **Bug found and fixed on the way.** `cv2.dnn.NMSBoxes` drops scores ≤ its threshold, which
+  must be ≥ 0. At N = 8,400, 70% of anchors quantise to score 0, so the first run skipped
+  them silently and made OpenCV look 15× faster at large N. OpenCV now gets `(q + 1) / 65536`,
+  which keeps every box and the order.
+- **At N = 32 the block beats the laptop's fastest library (OpenCV) by about 4×.** It beats
+  torchvision's per-call overhead by about 15×. At N = 8 OpenCV comes within 1.3×, because
+  the block's time does not shrink with N.
+- **Context only, outside the application's range.** The first sweep also ran N up to 8,400,
+  and its CSV is kept in `benchmarks/results/feasibility/`. There, an N²/P extrapolation of the block
+  meets the software curve at N ≈ 250. That finding is recorded but not pursued, because it
+  lies outside the niche.
+
+#### Research, finished
+
+These are agent-sourced findings. The agent marked each one as opened by it (V) or seen only
+in a snippet (S). Verify before citing.
+- **Vitis AI (V):** AMD's WAA `adas_detection` README (Vitis AI 2.5), YOLOv3-adas at
+  256 × 512 on ZCU102, all in software. Pre-processing 16.1 ms, DPU 8.35 ms, post-processing
+  **32.5 ms** on the A53. Post-processing covers dequantise, decode and NMS, so it is a
+  ceiling for NMS alone, not a time for it. ZCU104: 37.6 ms. In AMD's own example,
+  post-processing costs about 4× the CNN.
+  ([README](https://github.com/Xilinx/Vitis-AI/blob/v2.5/examples/Whole-App-Acceleration/apps/adas_detection/README.md))
+- **AMD ships a hardware NMS plugin (V),** but only for SSD-MobileNet on Alveo U280. There,
+  hardware pre- and post-processing raises end-to-end fps by 74%, and the README credits
+  reading the DPU buffer in place, with no device → host transfer. That is the in-fabric
+  argument, made by AMD.
+  ([WAA README](https://github.com/Xilinx/Vitis-AI/blob/v2.5/examples/Whole-App-Acceleration/README.md))
+- **Boxes entering NMS (V):** Overload (arXiv 2304.05370, Table 1) measures YOLOv5s on COCO
+  val2017 with median 28 and p90 234. Table 10 gives YOLOv8n a median of 7. Its confidence
+  threshold wasn't found. It is the published count E.2 was missing, and it is consistent
+  with the counts above.
+- **No published NMS-only time was found for a Cortex-A72 or A76.** The Pi 5 run is new data.
+
+#### Still to do in E0
+
+**The Pi 5 run at N = 8, 16 and 32**, the script's default sizes. It fills the Pi rows of the
+decision table. The expected outcome is "< 50 µs": the claims are then determinism and CPU
+offload. The candidate sets are gitignored (`*.npz`), so copy them across:
+```
+scp benchmarks/results/feasibility/raw_yolov8n.npz pi5:~/hardware-accelerated-nms-algorithm/  # gitignored, local only
+# on the Pi, in the repo, fan on, after `git pull`:
+uv run --extra bench python -m benchmarks.feasibility.time_vs_boxes --raw raw_yolov8n.npz --out benchmarks/results/feasibility
+```
+Commit the CSV and JSON. Then rerun
+`python -m benchmarks.feasibility.summarise --dir benchmarks/results/feasibility --png docs/images/nms_time_vs_boxes.png`,
+and the Pi rows appear alongside the laptop's.
+
+---
+
+### E1/E2 — the benchmark harness, built; Pi runs postponed           2026-09-29
+
+**Built and tested on the laptop. The Pi 5 runs are postponed by decision**: the
+infrastructure is in place so they are one command each when the team gets to them. Layout
+and design are in plan.md E.4.
+
+- `make bench TARGET=cpu|fpga LOAD=none|pipeline|concurrent|stress` runs
+  `python -m benchmarks`. The cpu target pulls the new `bench` extra (torch from the CPU-only
+  index, OpenCV, matplotlib); the detector loads add `bench-load` (ultralytics). CI installs
+  neither, and `make lint` now covers `benchmarks/`.
+- **Implementations:** `integer_sequential`, `integer_allpairs`, `numpy_allpairs`,
+  `c_scalar`, `torchvision`, `opencv`. The C variant is portable scalar C at `-O3` with
+  `-march=native` (x86) or `-mcpu=native` (Pi). **The hand-written AVX2 variant was dropped**
+  (2026-09-29), so Part 1e's AVX2 row stays an estimate.
+- **Checks, before any timing:** ours against `model.nms_sequential`, bit for bit; the
+  libraries against `inputs.nms_strict` (`>`), with any remaining mismatch attributed to
+  ties, inverted boxes or an exactly-on-threshold pair, or else failed.
+- **Every run writes** a CSV (min / median / p99 / max per implementation and group), a
+  JSON of machine metadata (commit, governor, clocks, versions, `vcgencmd` before and after,
+  `valid`), and every raw sample. `make bench-report [HIST=docs/images]` merges them.
+- `host.run_latency` is split into `measure_latency`, which returns the samples, and the
+  existing printer. `make host` prints exactly as before, which a test checks.
+- **Tests:** 20 new in `benchmarks/test_harness.py`, including C bit-exactness on 1,004
+  batches and on random `present_mask`s, a fake board for the fpga target, and a whole run
+  read back by the report. Full suite: 242 passed, 1 skipped.
+
+#### Findings from the smoke runs
+
+These came from checking the harness works, on the laptop under `powersave`. They are not
+the E4 row, which needs the `performance` governor.
+- **C is bit-exact** on all 1,004 batches. On `notebook32` it runs 0.75 µs median against a
+  32 ns clock-read floor, already close to the core's 0.80 µs T, as Part 1e predicted for a
+  3 GHz scalar core.
+- **Tie order, measured, is the opposite of plan.md E.3's assumption.** torchvision agrees
+  with our lower-index-first order everywhere. OpenCV disagrees on 173 of 1,000 hostile
+  batches, and every one has tied scores. E.3 is corrected.
+- **The pipeline load visibly moves the tail.** 20 frames only, so indicative: `c_scalar`
+  on `notebook32` went from 0.73 µs median / 0.83 p99 idle to 3.0 / 10.7 µs with a YOLOv8n
+  inference before each call. That is the effect E2 exists to measure.
+
+#### To run later, on the Pi 5
+
+```
+sudo apt install stress-ng           # once, for LOAD=stress
+git pull                             # fan fitted, nothing else running
+make bench                           # E1, idle; run twice, medians within ~10%
+make bench LOAD=pipeline             # E2, the main condition
+make bench LOAD=concurrent
+make bench LOAD=stress
+make bench-report HIST=docs/images   # tables for results.md, histograms for E2
+```
+
+Commit `benchmarks/results/` afterwards. A run is marked `valid: false`, and left out of
+the tables, if `vcgencmd get_throttled` shows any flag before or after it.
+
+---
+
+### Full latency, pinned: 113 cycles from the first record to `done`         2026-09-29
+
+The Phase E rules require the block's full latency to be measured before any comparison
+quotes it. Until now only T was pinned. `tb_nms_core` now pins the other two parts as
+equalities on every batch, like T:
+- **Load: 32 cycles.** The testbench writes one record per edge on 32 consecutive edges.
+- **Settle: 1 cycle.** `settled` must be '0' straight after the last write, because that
+  box's area is still in `box_store`'s shared multiplier, and '1' one edge later. `start` is
+  then pulsed on the first cycle the contract allows.
+
+| configuration | T | first record to `done` |
+|---|---|---|
+| **P = 16, `PIPE_CUTS` = 8, I = 2 (shipped)** | **80** | **113 cycles = 1.13 µs** |
+| I = 1 | 79 | 112 |
+| I = 0 | 78 | 111 |
+| `PIPE_CUTS` = 2 | 74 | 107 |
+| P = 32 | 48 | 81 |
+
+All five configurations pass, as does the rest of `make test`.
+
+**Correction:** the feasibility entry and the harness had assumed T + N = 112 cycles
+(1.12 µs), which leaves out the settle cycle. The harness (`benchmarks/targets/fpga.py`,
+`full_latency_cycles()`), the feasibility plot and plan.md's rules now use 113.
+
+This is simulation. Capturing it on the chip is the ILA stage (E3), next.
+
+---
+
+### E3 — the ILA build for T on silicon; capture waits for the board          2026-09-29
+
+**Built and meeting timing. The capture itself needs the Basys 3, which was not connected.**
+
+- **The licence blocked the planned route.** Post-synthesis insertion (`create_debug_core`)
+  fails under the BASIC licence: `[Vivado 12-29205] 'create_debug_core' tcl command is not
+  supported. Your current selected license is BASIC.` The ILA **catalogue IP** is allowed
+  (`create_ip -name ila`, `generate_target`, `synth_ip`), and `dbg_hub` is still inserted
+  automatically.
+- **So the ILA is instantiated from RTL.** `nms_top` has a new generic, `ILA : boolean :=
+  false`. When true, an `if ILA generate` block instantiates `ila_core` with five 1-bit
+  probes: `start`, `done`, `busy`, `settled` and `we`, the `frame_rx` ↔ `nms_core`
+  handshake. GHDL needs an entity to bind the component to even when the generate is false,
+  so `test/stubs/ila_core.vhd` is a do-nothing stand-in. It is listed only in the
+  Makefile's simulation sources and never reaches synthesis.
+- **`make impl ILA=1`** generates the IP, synthesises with `ILA=true`, and writes
+  `build/impl_ila/nms_top.bit` plus the probe file `nms_top.ltx`. The production bitstream
+  in `build/impl/` is never touched by a debug build.
+
+| build | LUT | FF | DSP | BRAM | WNS | WHS |
+|---|---|---|---|---|---|---|
+| production, `make impl` (rebuilt to check) | 12,570 | 9,979 | 33 | 0 | +0.200 ns | +0.043 ns |
+| debug, `make impl ILA=1` | 13,730 | 11,931 | 33 | 0.5 | +0.245 ns | +0.034 ns |
+
+The production figures are identical to D1's, so the generic changes nothing when false.
+The ILA costs about 1,160 LUT, 1,950 FF and one RAMB18. The critical path is unchanged,
+still `bitonic32` sub-stage 12 → 14. A parsing fix came out of this: `impl.tcl` had printed
+the half-tile BRAM as 0.
+
+**The capture, `make ila`** (`scripts/ila.tcl`):
+1. It programs the board with the debug bitstream and probe file.
+2. It arms 16 windows of 128 samples, each triggered on the rising edge of `start`.
+3. It runs `models.nms.host --random 16`, which sends 16 random batches and checks each
+   reply against the golden model.
+4. It exports the samples to `build/ila/ila.csv` (and `.vcd` for GTKWave).
+5. `benchmarks/onchip_latency.py` checks that every window measures `start` → `done` =
+   T = 80 samples, and draws the first window as `docs/images/onchip_latency.png`.
+
+The ILA samples each signal as a register sees it, just before each edge. The core registers
+`start` at edge 0 and raises `done` after edge T − 1, so `done` is first seen exactly T
+samples after `start`. That is the same equality `tb_nms_core` pins.
+
+Every window is a different random batch, so 16 equal counts would show the timing's
+independence from the data on the chip. The checker has 7 tests, on synthetic captures in
+Vivado's CSV layout. It accepts probes named after their nets (which is what the `.ltx`
+shows: `start`, `done` and so on) or as `probe0`–`probe4`.
+
+**Next, with the board plugged in:**
+```
+source ~/Vivado/2026.1/Vivado/settings64.sh
+make ila                  # expect "16 windows: every one measures T = 80 cycles on silicon"
+make program              # afterwards, to put the production bitstream back
+```
