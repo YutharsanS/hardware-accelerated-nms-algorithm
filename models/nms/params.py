@@ -86,10 +86,17 @@ CAS_COUNT = SORT_SUBSTAGES * (N // 2)
 """Compare-and-swap units in the whole network: 240. At ``8 + 2*ceil(KEY_W/2)`` = 30 LUT
 each that is the 7,200 LUT (34.6%) in the area budget."""
 
-PIPE_CUTS = 2
-"""Register cuts inside the bitonic network, giving a 3-cycle sort. 0 is combinational and
-will not close 100 MHz; 14 is fully pipelined and costs 10k FF for throughput nothing can
-consume. Bounded above by SORT_SUBSTAGES -- one cut per sub-stage is as fine as it gets."""
+PIPE_CUTS = 8
+"""Register cuts inside the bitonic network; the sort takes exactly this many cycles. 8 is
+the lowest swept value that meets 100 MHz after place and route (119.2 MHz, results.md
+section 2); 2 reaches only 53.9 MHz. 0 is combinational; 15 is one cut per sub-stage, the
+upper bound."""
+
+ISSUE_REGS = 2
+"""Register stages between nms_ctrl's issue and lane stage 1 inside nms_core: one after the
+row/column selects, one after the payload muxes. Without them that path measures 14.9 ns in
+the placed core (67 MHz); with 2 the core closes 100 MHz (results.md section 5). To nms_ctrl
+they are extra lane stages, so they add to the latency like LANE_LATENCY does."""
 
 CLOCK_HZ = 100_000_000
 
@@ -110,6 +117,11 @@ REPLY_BYTES = 1 + 1 + 4
 BAUD = 1_000_000
 """Divider from CLOCK_HZ is exactly 100, so zero baud error."""
 
+CRC8_POLY = 0x07
+CRC8_INIT = 0x00
+"""CRC-8/SMBUS over frame bytes 2..262: polynomial x^8 + x^2 + x + 1, MSB first, no
+reflection, no final XOR. Check value for ASCII ``123456789`` is ``0xF4``."""
+
 
 def latency_cycles(p: int = P_DEFAULT, *, n: int = N) -> int:
     """Return the exact batch latency in clock cycles.
@@ -124,7 +136,7 @@ def latency_cycles(p: int = P_DEFAULT, *, n: int = N) -> int:
     Returns:
         Cycles from ``SORT`` to ``DONE``.
     """
-    return n * n // p + LANE_LATENCY + PIPE_CUTS + 2
+    return n * n // p + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2
 
 
 def quantise_score(confidence: float) -> int:
@@ -137,6 +149,23 @@ def quantise_score(confidence: float) -> int:
         The 16-bit integer score.
     """
     return round(max(0.0, min(1.0, confidence)) * SCORE_MAX)
+
+
+def crc8(data: bytes) -> int:
+    """Compute the frame CRC-8 exactly as ``frame_rx`` does.
+
+    Args:
+        data: The bytes covered, i.e. frame bytes 2..262.
+
+    Returns:
+        The 8-bit CRC.
+    """
+    crc = CRC8_INIT
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = ((crc << 1) ^ CRC8_POLY) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
 
 
 def validate() -> list[str]:
@@ -188,7 +217,8 @@ def validate() -> list[str]:
     want("CAS_COUNT", CAS_COUNT, 240)
     want("PIPE_CUTS fits the network", PIPE_CUTS <= SORT_SUBSTAGES, True)
     want("P_DEFAULT divides N", N % P_DEFAULT, 0)
-    want("latency at P_DEFAULT", latency_cycles(), 72)
+    want("latency at P_DEFAULT", latency_cycles(), 80)
+    want("CRC-8 check value", crc8(b"123456789"), 0xF4)
     want("FRAME_BYTES_IN", FRAME_BYTES_IN, 264)
     want("REPLY_BYTES", REPLY_BYTES, 6)
     want("baud divider is exact", CLOCK_HZ % BAUD, 0)
@@ -221,8 +251,8 @@ def summary() -> str:
         ),
         ("KEY_W", KEY_W),
         (
-            "P_DEFAULT / LANE_LATENCY / PIPE_CUTS",
-            f"{P_DEFAULT} / {LANE_LATENCY} / {PIPE_CUTS}",
+            "P_DEFAULT / LANE_LATENCY / ISSUE_REGS / PIPE_CUTS",
+            f"{P_DEFAULT} / {LANE_LATENCY} / {ISSUE_REGS} / {PIPE_CUTS}",
         ),
         (
             "latency at P_DEFAULT",

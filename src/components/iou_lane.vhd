@@ -163,7 +163,13 @@ begin
             -- never underflow. Simulation-only -- it mirrors the same assertion in the
             -- golden model, and an unsigned wrap here would otherwise look like a
             -- plausible wrong answer rather than a fault.
-            assert area_sum >= resize(s2_inter, UNION_W)
+            --
+            -- Gated by stage 2's valid bit, because the lemma only holds for a consistent
+            -- pair. The lane computes every cycle, valid or not, and in the integrated core
+            -- a slot's new coordinates land one edge before its new area. The inconsistent
+            -- pair that results is never marked valid, so it is harmless, but ungated this
+            -- check fired on it (found at C4; tb_iou_lane only ever feeds consistent pairs).
+            assert valid_d(2) = '0' or area_sum >= resize(s2_inter, UNION_W)
                 report "iou_lane: union underflow, I = "
                      & integer'image(to_integer(s2_inter)) & " exceeds the area sum "
                      & integer'image(to_integer(area_sum))

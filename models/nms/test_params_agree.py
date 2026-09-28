@@ -65,6 +65,7 @@ EXPECTED: dict[str, int] = {
     "SORT_SUBSTAGES": p.SORT_SUBSTAGES,
     "CAS_COUNT": p.CAS_COUNT,
     "PIPE_CUTS": p.PIPE_CUTS,
+    "ISSUE_REGS": p.ISSUE_REGS,
     "LATENCY_CYCLES": p.latency_cycles(),
     "MAGIC_0": p.MAGIC[0],
     "MAGIC_1": p.MAGIC[1],
@@ -77,6 +78,8 @@ EXPECTED: dict[str, int] = {
     "CLOCK_HZ": p.CLOCK_HZ,
     "BAUD": p.BAUD,
     "BAUD_DIV": p.CLOCK_HZ // p.BAUD,
+    "CRC8_POLY": p.CRC8_POLY,
+    "CRC8_INIT": p.CRC8_INIT,
 }
 
 
