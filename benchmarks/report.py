@@ -201,6 +201,130 @@ def histograms(run: dict, directory: Path, out: Path) -> Path | None:
     return png
 
 
+LOAD_COLORS = {
+    "none": "#2a78d6",
+    "pipeline": "#eb6834",
+    "concurrent": "#1baf7a",
+    "stress": "#eda100",
+}
+"""Fixed categorical order, so a load keeps its colour whichever loads a figure shows."""
+LOAD_LABELS = {
+    "none": "idle",
+    "pipeline": "pipeline (YOLO before each call)",
+    "concurrent": "concurrent (YOLO in another process)",
+    "stress": "stress-ng memory load",
+}
+COMPARE_IMPLS = ("c_scalar", "opencv", "torchvision")
+
+
+def load_comparison(
+    runs: list[dict], directory: Path, host: str, png: Path
+) -> Path | None:
+    """Draw how each implementation's time shifts with load on one machine, for E2.
+
+    One panel per implementation, one cumulative distribution per load over the hostile
+    stream, and the block's fixed full latency as a vertical line: a curve that sits right
+    of the line, or leans further right under load, is time and variance the block removes.
+
+    Args:
+        runs: From :func:`load_runs`.
+        directory: The results directory holding the samples files.
+        host: A substring of the machine label, e.g. ``Raspberry Pi 4``.
+        png: Output path.
+
+    Returns:
+        The PNG path, or None when the machine has no valid CPU runs.
+    """
+    import matplotlib as mpl
+
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    chosen: dict[str, dict] = {}
+    for run in sorted(runs, key=lambda r: "--tag" in r["meta"].get("argv", [])):
+        m = run["meta"]
+        if (
+            host in m.get("label", "")
+            and m.get("target") == "cpu"
+            and m.get("valid", True)
+        ):
+            chosen.setdefault(m.get("load", "none"), run)
+    if not chosen:
+        return None
+    samples: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for load, run in chosen.items():
+        with gzip.open(directory / f"{run['stem']}-samples.csv.gz", "rt") as f:
+            for r in csv.DictReader(f):
+                if r["case"] == "hostile" and r["impl"] in COMPARE_IMPLS:
+                    samples[r["impl"], load].append(float(r["us"]))
+    core = fpga_target.core_row()
+    ink, muted, surface, block = "#0b0b0b", "#52514e", "#fcfcfb", "#4a3aa7"
+    fig, axes = plt.subplots(
+        1,
+        len(COMPARE_IMPLS),
+        figsize=(11, 3.8),
+        dpi=150,
+        facecolor=surface,
+        sharey=True,
+    )
+    for ax, impl in zip(axes, COMPARE_IMPLS, strict=True):
+        ax.set_facecolor(surface)
+        for load, color in LOAD_COLORS.items():
+            values = np.sort(samples.get((impl, load), []))
+            if len(values) == 0:
+                continue
+            y = np.arange(1, len(values) + 1) / len(values)
+            ax.step(
+                values,
+                y,
+                where="post",
+                color=color,
+                lw=2,
+                label=f"{LOAD_LABELS[load]} (n={len(values)})",
+            )
+        ax.axvline(core["full_us"], color=block, lw=2, ls=(0, (4, 2)))
+        ax.text(
+            core["full_us"] * 1.08,
+            0.04,
+            f"block {core['full_us']:.2f} µs",
+            color=ink,
+            fontsize=8,
+            rotation=90,
+            va="bottom",
+        )
+        ax.set_xscale("log")
+        ax.set_title(impl, color=ink, loc="left", fontsize=10)
+        ax.set_xlabel("µs per NMS call (log)", color=ink, fontsize=9)
+        ax.grid(True, which="major", color="#e4e3df", lw=0.8)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(colors=muted, labelsize=8)
+    axes[0].set_ylabel("fraction of calls at or below", color=ink, fontsize=9)
+    label = next(iter(chosen.values()))["meta"].get("label", host)
+    fig.suptitle(
+        f"{label}, hostile stream: software NMS by load, against the block",
+        color=ink,
+        x=0.01,
+        ha="left",
+        fontsize=11,
+    )
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        [lb.split(" (n=")[0] for lb in labels],
+        loc="lower center",
+        ncol=len(labels),
+        frameon=False,
+        fontsize=8,
+    )
+    fig.tight_layout(rect=(0, 0.08, 1, 0.95))
+    png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(png, facecolor=surface)
+    plt.close(fig)
+    return png
+
+
 def render(runs: list[dict]) -> str:
     """Render every run as Markdown.
 
@@ -226,12 +350,25 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dir", type=Path, default=RESULTS_DIR)
     ap.add_argument("--hist", type=Path, help="write per-run histograms here")
+    ap.add_argument(
+        "--compare-loads",
+        nargs=2,
+        metavar=("HOST", "PNG"),
+        help="draw one machine's runs by load, e.g. 'Raspberry Pi 4' docs/images/x.png",
+    )
     args = ap.parse_args()
     runs = load_runs(args.dir)
     if not runs:
         print(f"no results in {args.dir}; run make bench first")
         return
     print(render(runs))
+    if args.compare_loads:
+        png = load_comparison(
+            runs, args.dir, args.compare_loads[0], Path(args.compare_loads[1])
+        )
+        print(
+            f"wrote {png}" if png else f"no valid runs match {args.compare_loads[0]!r}"
+        )
     if args.hist:
         # One figure per machine, target and load. A repeat run (``--tag run2``) is there
         # for the within-10% check on its numbers; drawing it again duplicates the figure.

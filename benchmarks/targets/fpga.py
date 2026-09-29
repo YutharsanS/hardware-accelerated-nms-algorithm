@@ -18,7 +18,8 @@ from models.nms import params as p
 SETTLE_CYCLES = 1
 """box_store computes each area one edge after its record lands; tb_nms_core pins it."""
 CORE_NOTE = (
-    "pinned as equalities in tb_nms_core, in simulation; not yet captured on silicon"
+    "T = 80 captured on silicon by the ILA (16 of 16 windows); load and settle pinned in "
+    "tb_nms_core, in simulation"
 )
 
 

@@ -1,0 +1,7 @@
+target,load,host,impl,kind,case,batches,samples,min_us,median_us,p99_us,max_us,agreement,mismatch_causes,valid
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,integer_sequential,ours,hostile,1000,100,246.981,1483.3035,2014.534,2026.812,ok,,True
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,integer_allpairs,ours,hostile,1000,100,3516.977,3774.0215,3954.551,3997.699,ok,,True
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,numpy_allpairs,ours,hostile,1000,100,502.092,675.842,757.036,764.887,ok,,True
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,c_scalar,ours,hostile,1000,100,2.722,10.0365,12.259,12.371,ok,,True
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,torchvision,library,hostile,1000,100,356.296,401.6755,533.37,540.832,ok,,True
+cpu,pipeline,Raspberry Pi 4 Model B Rev 1.5,opencv,library,hostile,1000,100,56.499,75.8145,86.685,123.778,explained,ties=173,True

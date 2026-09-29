@@ -1576,11 +1576,11 @@ All five configurations pass, as does the rest of `make test`.
 (1.12 µs), which leaves out the settle cycle. The harness (`benchmarks/targets/fpga.py`,
 `full_latency_cycles()`), the feasibility plot and plan.md's rules now use 113.
 
-This is simulation. Capturing it on the chip is the ILA stage (E3), next.
+This is simulation. T alone was captured on the chip the same day (E3, below).
 
 ---
 
-### E3 — the ILA build for T on silicon; capture waits for the board          2026-09-29
+### E3 — the ILA build for T on silicon                                     2026-09-29
 
 **Built and meeting timing. The capture itself needs the Basys 3, which was not connected.**
 
@@ -1633,3 +1633,69 @@ source ~/Vivado/2026.1/Vivado/settings64.sh
 make ila                  # expect "16 windows: every one measures T = 80 cycles on silicon"
 make program              # afterwards, to put the production bitstream back
 ```
+
+---
+
+### E3 — T captured on silicon: 80 cycles in 16 of 16 windows              2026-09-29
+
+**Done.** `make ila` on the Basys 3 captured 16 windows, one per random batch sent by the
+host, and every one measured **`start` → `done` = 80 cycles = 800 ns**, with `busy` high for
+exactly 80. The host checked all 16 replies against the golden model. `done` sits exactly T
+samples after `start`, the same equality `tb_nms_core` pins, so simulation and silicon agree
+to the cycle. The capture is committed as `benchmarks/results/onchip-ila-2026-09-29.{csv,vcd}`,
+and the waveform is [images/onchip_latency.png](images/onchip_latency.png).
+
+Two fixes to `scripts/ila.tcl` were needed on the first real run. Neither could be tested
+without the board:
+- **`CONTROL.TRIGGER_MODE` is read-only** on an ILA built without advanced triggering
+  (`C_ADV_TRIGGER false`), which is fixed at basic mode anyway. The line was removed, and
+  the AND/OR trigger-condition setting no longer aborts the run.
+- **Vivado's launcher sets `PYTHONHOME` and `PYTHONPATH`** to its bundled Python 3.13, not
+  only `LD_LIBRARY_PATH`. The host, run from inside the Tcl script, then failed with `No
+  module named 'encodings'`. The script now strips all three before calling `uv run`.
+
+**What is and isn't on silicon now:**
+- **T = 80 is measured on the chip.**
+- The 32 load cycles and 1 settle cycle of the full 113-cycle latency are still simulation
+  figures. Over the UART the records arrive milliseconds apart, so the board never loads 32
+  back to back; only an in-fabric producer would.
+- The capture used the debug build (+0.245 ns). Restore the production bitstream with
+  `make program`.
+
+---
+
+### E1/E2 — the Raspberry Pi 4 runs                                           2026-09-29
+
+**Done, on a Pi 4 rather than the Pi 5 the plan names.** A Raspberry Pi 4 Model B Rev 1.5
+(Cortex-A72, 1.8 GHz, 64-bit OS, gcc 14.2) ran the harness from a clean clone. It ran idle
+twice, then pipeline, concurrent and stress, plus the feasibility timing at N ≤ 32. All runs
+are valid: no throttling before or after any run, 53–74 °C, and every answer agreed with its
+reference. The results are in results.md §8, with the load figure
+[images/pi4_nms_by_load.png](images/pi4_nms_by_load.png).
+
+**The headline:** the block's fixed 1.13 µs beats every software implementation on every
+input except one. C wins on `all_equal` (1.02 µs), where 32 identical boxes let sequential
+code stop after the first keeper. Load moves every library and never the block. The
+pipeline load doubles OpenCV's and torchvision's medians. Concurrent and stress push
+torchvision's p99 to about 1.4 ms, 6× idle.
+
+**Three harness bugs, found only by running on a fresh machine, each fixed and committed:**
+- **`d69d520`: the concurrent detector never started on a first run.** Ultralytics prints its
+  settings-file message and download progress to stdout. The harness read stdout for the
+  worker's `ready` line and failed on the first other line. The worker now keeps stdout for
+  `ready` alone, and the parent skips stray lines.
+- **`76fa3a9`: the pipeline load looked hung.** YOLO ran in the benchmark's process, which is
+  pinned to one CPU with one torch thread, so each frame took seconds, and the run printed
+  nothing until the end. The detector is now built before the main thread pins itself, so
+  torch's workers keep every core. The main thread pins once and never migrates, and the
+  run prints progress. A first version re-pinned before every call, and its migration cost
+  inflated C's pipeline median from 6.0 to 9.2 µs on the laptop, so that approach was
+  dropped.
+- **`f8973e4`: `make bench-report HIST=…` drew a histogram for the repeat run too**,
+  duplicating a figure. It now draws one per machine and load.
+
+**Recorded, not rerun:** the idle and concurrent runs used the `ondemand` governor, while
+pipeline and stress used `performance`. The ARM clock read 1.8 GHz in every run, and the
+idle runs repeat within 4.4%, so `ondemand` held full speed under a continuous benchmark.
+The pipeline run reached 74 °C, 6 °C below the Pi 4's soft-throttle point, so longer runs
+would need better cooling.

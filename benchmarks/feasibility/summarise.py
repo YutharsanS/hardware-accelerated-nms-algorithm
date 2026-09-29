@@ -145,7 +145,7 @@ def plot(timings: list[dict], png: Path) -> None:
         timings: Rows from :func:`load_timings`, already limited to the plotted N.
         png: Output path.
     """
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=150, facecolor=SURFACE)
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=150, facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
     hosts = sorted({r["host"] for r in timings})
     styles = ["-", "--", ":", "-."]
@@ -205,7 +205,13 @@ def plot(timings: list[dict], png: Path) -> None:
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     ax.tick_params(colors=MUTED)
-    ax.legend(fontsize=7, frameon=False, loc="upper left")
+    ax.legend(
+        fontsize=7,
+        frameon=False,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        ncol=2,
+    )
     fig.tight_layout()
     png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png, facecolor=SURFACE)

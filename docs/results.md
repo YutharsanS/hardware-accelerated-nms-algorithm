@@ -257,15 +257,28 @@ The excess over wire time is on the host side: USB full-speed polling, the FTDI 
 OS scheduling. That is inferred, not separately measured. The figure measures the test harness
 and not the accelerator, as [architecture.md](architecture.md) §11 says it would.
 
+**T = 80 cycles, measured on silicon.** An ILA on the core's handshake (a debug build, `make
+impl ILA=1`, +0.245 ns slack) captured 16 windows on the Basys 3 on 2026-09-29, one per random
+batch sent by the host. **Every window measured `start` → `done` = 80 cycles = 800 ns**, and
+`busy` was high for exactly 80. The count was the same for 16 different batches, so the
+latency's independence from the data is shown on the chip, not only in simulation. It is
+exactly the count `tb_nms_core` pins.
+([benchmarks/results/onchip-ila-2026-09-29.csv](../benchmarks/results/onchip-ila-2026-09-29.csv),
+[images/onchip_latency.png](images/onchip_latency.png).)
+
+![ILA capture: start to done in 80 cycles](images/onchip_latency.png)
+
 **The core's full latency, from the first record in to `done`, is 113 cycles = 1.13 µs:**
 32 load cycles, 1 settle cycle for the last box's area, and T = 80. `tb_nms_core` pins each
 part as an equality on every batch, in simulation ([build_log.md](build_log.md), "Full
-latency, pinned"). It is the figure a whole software NMS call is compared with.
+latency, pinned"). It is the figure a whole software NMS call is compared with. Of its three
+parts, T is now also measured on silicon (above). The 32 load cycles and the 1 settle cycle
+remain simulation figures: over the UART the records arrive milliseconds apart, so the board
+never loads 32 back to back.
 
 **Still not measured:**
 - the round trip at the FTDI default 16 ms timer (reproduce with
   `make host ARGS="--latency 500 --leave-latency-timer"` after resetting the timer);
-- T = 80 cycles on silicon, rather than in simulation (plan.md Phase E3, the ILA capture).
 
 ---
 
@@ -305,5 +318,71 @@ largest difference was torchvision's +8.5%; C and OpenCV were within 6%.
   the spec, on 173 hostile batches, all with tied scores. torchvision matches the spec's
   lower-index-first order everywhere.
 
-The Pi 5, the main competitor, is still to be run (plan.md E1/E2).
+The Pi 4 is in §8. The Pi 5 the plan names was not available.
+
+---
+
+## 8. Software NMS on a Raspberry Pi 4, idle and under load
+
+`make bench` on a **Raspberry Pi 4 Model B (Rev 1.5), Cortex-A72 at 1.8 GHz**, 64-bit Raspberry
+Pi OS, gcc 14.2 at `-O3 -mcpu=native`, pinned to CPU 2, one thread per timed call. Five runs on
+2026-09-29 at commits `8fdab41`–`f8973e4`, all clean. None throttled: `vcgencmd get_throttled` read
+0x0 before and after every run, at 53–74 °C. The plan names a Pi 5, which was not available. The
+Pi 4's Cortex-A72 is the core TI's edge SoCs pair with their accelerators, and it is slower than
+the Pi 5's A76, so these rows are conservative for the Pi 5 comparison
+([benchmarks/results/](../benchmarks/results/), `cpu-raspberrypi-2026-09-29-*`).
+
+### Idle, every input group (median / p99 µs)
+
+| implementation | notebook32 | all_survive | all_equal | rand_seed0 | hostile |
+|---|---|---|---|---|---|
+| C, scalar | 2.11 / 2.15 | 7.39 / 7.43 | **1.02 / 1.04** | 6.52 / 6.56 | 8.89 / 11.7 |
+| OpenCV | 19.0 / 19.6 | 30.4 / 32.1 | 17.9 / 18.7 | 27.6 / 28.9 | 35.7 / 44.1 |
+| torchvision | 191 / 260 | 196 / 221 | 190 / 227 | 195 / 221 | 195 / 222 |
+| numpy all-pairs | 306 / 335 | 449 / 470 | 271 / 314 | 417 / 443 | 425 / 482 |
+| **the block** | **1.13** | **1.13** | **1.13** | **1.13** | **1.13** |
+
+Repeatability: a second idle run put every median within 4.4% of the first.
+
+### Under load, hostile stream (median / p99 µs)
+
+| implementation | idle | pipeline | concurrent | stress |
+|---|---|---|---|---|
+| C, scalar | 8.89 / 11.7 | 10.0 / 12.3 | 9.59 / 14.2 | 8.62 / 13.2 |
+| OpenCV | 35.7 / 44.1 | **75.8** / 86.7 | 38.0 / 78.9 | 37.1 / 47.1 |
+| torchvision | 195 / 222 | **402** / 533 | 252 / **1,372** | 344 / **1,442** |
+| numpy all-pairs | 425 / 482 | 676 / 757 | 585 / 1,164 | **1,346** / 1,699 |
+| **the block** | **1.13** | **1.13** | **1.13** | **1.13** |
+
+- **pipeline** runs a YOLOv8n inference before every timed call, in the same process, on all
+  four cores: the way a detection pipeline really runs. It is the main condition.
+- **concurrent** runs YOLOv8n continuously in a second process on the other three cores.
+- **stress** runs two `stress-ng` memory workers on the other three cores.
+- The pipeline run has 100 samples per implementation (600 inferences took 9.6 minutes), so its
+  p99 is the second-highest value. The others have 350–5,000.
+
+![Pi 4: software NMS by load against the block](images/pi4_nms_by_load.png)
+
+**What it shows:**
+- **On the Pi 4 the block is faster than every software implementation on every input except
+  one.** C wins only on `all_equal`, 1.02 µs against 1.13 µs. There all 32 boxes are identical,
+  so the first keeper suppresses the rest and sequential code stops at once, while the block
+  runs its full schedule. In the hostile stream, 0–1.6% of C calls come in under the block.
+  Elsewhere the block's lead over C is 1.9× (`notebook32`) to 7.9× (the hostile median).
+- **Load moves software, and never the block.** The pipeline load, a cold cache after every
+  inference, doubles OpenCV's and torchvision's medians. The concurrent and stress loads leave
+  torchvision's median near idle but push its p99 to about 1.4 ms, 6× its idle p99, with a
+  worst call of 1.8 ms. The block's T is 80 cycles on every batch, measured on silicon (§6).
+- **Against the libraries edge pipelines call**, the block is 16–67× faster than OpenCV and
+  170–360× faster than torchvision on medians, and up to about 1,300× on the p99 under load.
+- **Even plain C has a tail:** its worst idle call on the hostile stream is 82 µs against a
+  9 µs median. The OS interrupts it. That is the variance a fixed-cycle block doesn't have.
+
+**Semantics** match the laptop: every answer agreed with its reference in every run, and OpenCV's
+tie order differed on the same 173 hostile batches.
+
+**Feasibility sweep on the Pi 4** (N = 8, 16, 32, unpinned): OpenCV 7.7 / 11.4 / 20.4 µs,
+torchvision 189 / 192 / 195 µs, numpy 172 / 207 / 289 µs, with torchvision and OpenCV
+agreeing at every N. [images/nms_time_vs_boxes.png](images/nms_time_vs_boxes.png) plots these
+beside the laptop.
 
