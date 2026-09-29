@@ -1,6 +1,6 @@
 """The batches every benchmark runs, and the references they are checked against.
 
-plan.md Phase E, E.3:
+docs/results/benchmarks.md §3:
 
 * the four ``bench.benchmark_suite`` cases, each timed on its own;
 * ``hostile``: cycling through ``batches.hostile_stream(1000)``, so that a repeated batch

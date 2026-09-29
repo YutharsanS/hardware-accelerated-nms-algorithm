@@ -2,7 +2,7 @@
 
 This measures the **full system**: USB, the FTDI latency timer, 264 + 6 bytes at 1 Mbaud,
 and the core's 0.80 µs, which is about 0.02% of it. Its rows go in their own "end to end"
-column and are never set against a compute time (plan.md Phase E, E.4). The core figure it
+column and are never set against a compute time. The core figure it
 sits beside comes from :func:`core_row`, not from this measurement.
 
 Every reply is checked against the golden model; the board implements ``>=``, so it must
@@ -27,7 +27,7 @@ def full_latency_cycles() -> int:
     """Return the block's latency from the first record in to ``done``.
 
     One record per cycle through ``we``, the one-cycle area settle, then T. This, not T
-    alone, is what a whole software NMS call is compared with (plan.md Phase E rules).
+    alone, is what a whole software NMS call is compared with (docs/results/benchmarks.md §2).
 
     Returns:
         ``N + SETTLE + T``: 113 at the shipped generics.

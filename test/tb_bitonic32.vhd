@@ -8,7 +8,7 @@
 -- LATENCY IS A GENERIC. PIPE_CUTS is passed to the DUT and used as the number of clock
 -- edges to wait before sampling, so this one testbench covers the combinational
 -- configuration (PIPE_CUTS = 0, sample immediately) and every registered one. The
--- Makefile runs it at 0 and 2; docs/project/plan.md B3.2 sweeps {0, 2, 3, 14} through Vivado.
+-- Makefile runs it at 0 and 2; the synthesis sweep ran {0, 2, 3, 14} through Vivado.
 --
 -- Four checks per case, and the last two are the ones that matter:
 --
@@ -24,7 +24,7 @@
 -- output, since the payloads never move. Checks 3 and 4 are what close that gap, from the
 -- two independent directions the vector files allow.
 --
--- File paths come in through the VECTOR_DIR generic (docs/project/plan.md L7): the default assumes
+-- File paths come in through the VECTOR_DIR generic: the default assumes
 -- the working directory is the repository root, which is what `make` guarantees, and any
 -- other caller overrides -gVECTOR_DIR rather than discovering a silent open failure.
 
@@ -169,7 +169,7 @@ begin
             -- edges and finding the right answer only proves latency is not *longer*
             -- than claimed -- a sorter with one register too few would pass, because by
             -- then its output has been correct for a cycle. So one edge short, the output
-            -- must still be the previous batch's result. That is the number B5.2's
+            -- must still be the previous batch's result. That is the number the integration check's
             -- cycle-count assertion depends on, so it is measured rather than assumed.
             previous := keys_out;
             keys_in  <= keys;

@@ -13,7 +13,7 @@
 --   * IDLE TIMEOUT: no byte for more than two byte-times mid-frame returns to HUNT.
 --   * a FRAMING ERROR from uart_rx mid-frame also returns to HUNT.
 -- A frame dropped by a timeout or a framing error gets no reply; the host's read timeout
--- covers it (plan.md O7). A frame that arrives complete always gets exactly one outcome.
+-- covers it. A frame that arrives complete always gets exactly one outcome.
 --
 -- OUTCOME, decided on the CRC byte (fsm_design.md section 1, the start/busy rule):
 --   * CRC mismatch                                        -> reject, status 0x01

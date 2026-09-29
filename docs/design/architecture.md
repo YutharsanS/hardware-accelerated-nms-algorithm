@@ -278,7 +278,7 @@ supersedes this table wherever a block has actually been built):
   does **not** fit this device. A folded sorter is the path past that.
 * **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.80 µs of
   compute. The report must present **core latency** and determinism, not a system speedup;
-  end-to-end, doing NMS on the host CPU is faster. See `docs/project/build_log.md` and the plan's Part 1e.
+  end-to-end, doing NMS on the host CPU is faster. See `docs/results/benchmarks.md`.
 
 ---
 

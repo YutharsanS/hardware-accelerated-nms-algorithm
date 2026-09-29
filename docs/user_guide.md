@@ -307,8 +307,7 @@ make bench-report                                     # merge every run into tab
       --png docs/images/nms_time_vs_boxes.png
   ```
 
-What was measured and what it shows is in [benchmarks.md](results/benchmarks.md); the method is
-[plan.md](project/plan.md) Phase E.
+What was measured, how, and what it shows is in [benchmarks.md](results/benchmarks.md).
 
 ---
 

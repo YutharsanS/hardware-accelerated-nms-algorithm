@@ -1,4 +1,4 @@
-# `nms_ctrl` — control FSM design (plan.md C3)
+# `nms_ctrl` — control FSM design
 
 > **Status: reviewed 2026-09-24.** Every section answers the prompt above it and cites the spec
 > line it rests on. Where the design disagrees with the spec, it says so and names the document
@@ -7,8 +7,7 @@
 > note in §9.
 
 **Normative sources:** [architecture.md](architecture.md) §3 (wire protocol), §6 (sort key),
-§8 (storage), §9 (architecture); [plan.md](../project/plan.md) Part 2 "Architecture" and "Control FSM"
-(lines 746–831), Part 1d (latency, lines 533–590).
+§8 (storage), §9 (architecture, the control FSM and the latency equality), §10 (conventions).
 
 **Configuration this doc is written for:** `N = 32`, `P = 16`, `L = LANE_LATENCY = 4`,
 `C = PIPE_CUTS = 8` (see [hardware.md](../results/hardware.md) §5). Throughout, `G = N/P` is the number of
@@ -18,7 +17,7 @@ column groups per row: 2 at P = 16.
 
 ## 1. Scope and boundary
 
-plan.md's FSM ([plan.md:814-831](../project/plan.md#L814-L831)) folds frame reception and CRC checking into
+The system-level FSM ([architecture.md §9](architecture.md)) folds frame reception and CRC checking into
 `LOAD`. Before listing states, decide where `nms_ctrl` starts and ends.
 
 - Which module owns magic detection, the CRC-8 and `seq` — `frame_rx` or `nms_ctrl`?
@@ -31,12 +30,12 @@ _Answer:_
 
 **`frame_rx` owns everything about the wire:** the magic hunt, CRC-8, `seq`, the idle timeout,
 byte-to-record packing, the `box_store` writes (areas are computed there as each record lands,
-[plan.md:771](../project/plan.md#L771)) and the `present_mask` register. plan.md's `LOAD` state is
+[architecture.md §9](architecture.md)) and the `present_mask` register. That `LOAD` state is
 therefore `frame_rx`'s receive phase, not a state of `nms_ctrl`. From `nms_ctrl`'s point of view
 a batch arriving is just `IDLE` waiting.
 
 **One event starts a batch:** a one-cycle `start` pulse, which `frame_rx` raises only on a good
-frame ([plan.md:648](../project/plan.md#L648)). `nms_ctrl` is **never told about a rejected frame**. On a
+frame ([architecture.md §3](architecture.md)). `nms_ctrl` is **never told about a rejected frame**. On a
 CRC failure `frame_rx` simply does not pulse `start`, and it asks `frame_tx` for the
 `status = 0x01` reply itself. The busy case (`0x02`) goes the same way, which is why `busy` is an
 output of `nms_ctrl` and an input of `frame_rx`.
@@ -70,8 +69,7 @@ would get no reply at all.
 
 Together these guarantee that `keys_in` (and the areas) are stable from before the cycle that
 samples `start` until `DONE`. At 1 Mbaud none of the three can trigger — the next record byte is
-≥ 20 µs away and a batch takes 0.78 µs — but the rules are stated rather than relied on
-([plan.md:1168](../project/plan.md#L1168), L3).
+≥ 20 µs away and a batch takes 0.78 µs — but the rules are stated rather than relied on.
 
 **Why split it this way.** `nms_ctrl` can then be tested with no UART, no CRC and no framing at
 all: the testbench drives one pulse and reads one mask (§8). The reject paths, which are all
@@ -83,29 +81,29 @@ out a full batch. The cost is one more handshake, `busy`, crossing a module boun
 
 ## 2. Interface
 
-One row per port. "Spec source" is the line in architecture.md or plan.md that fixes it; a port
+One row per port. "Spec source" is the section of architecture.md that fixes it; a port
 with no source is a decision you are making — mark it **(new)**.
 
 **Generics:** `P : positive := P_DEFAULT`, `PIPE_CUTS : natural := work.nms_pkg.PIPE_CUTS`,
 `LANE_LATENCY : positive := work.nms_pkg.LANE_LATENCY`. An elaboration-time assertion checks
-`N mod P = 0` ([plan.md:762](../project/plan.md#L762)). The generics are spelled with the full package
+`N mod P = 0` ([architecture.md §9](architecture.md)). The generics are spelled with the full package
 name, as in [bitonic32.vhd:45](../../src/components/bitonic32.vhd#L45).
 
 | signal | dir | width | meaning | spec source |
 |---|---|---|---|---|
 | `clk` | in | 1 | 100 MHz system clock | [architecture.md §10](architecture.md) |
 | `rst` | in | 1 | synchronous, active high | [architecture.md §10](architecture.md) |
-| `start` | in | 1 | one-cycle pulse: a good frame is in `box_store`, and the areas and `present_mask` are stable | [plan.md:648](../project/plan.md#L648) |
+| `start` | in | 1 | one-cycle pulse: a good frame is in `box_store`, and the areas and `present_mask` are stable | [architecture.md §3](architecture.md) |
 | `present_mask` | in | 32 | load value of `valid_mask` at `start` | [architecture.md §3](architecture.md) |
-| `busy` | out | 1 | `state /= IDLE`; `frame_rx` gates `box_store` writes with it | [plan.md:872-874](../project/plan.md#L872-L874) |
+| `busy` | out | 1 | `state /= IDLE`; `frame_rx` gates `box_store` writes with it | §1 |
 | `keys_sorted` | in | 32 × 21 | `bitonic32.keys_out`, ascending | [architecture.md §9](architecture.md) |
 | `issue_valid` | out | 1 | a pair group is presented this cycle; drives every lane's `valid_in` | **(new)** — [iou_lane.vhd:47](../../src/components/iou_lane.vhd#L47) |
-| `row_src` | out | 5 | slot of the current row's box, i.e. `index_table(r)`; select for the shared 32:1 row-source mux | [plan.md:762-765](../project/plan.md#L762-L765) |
-| `col_grp` | out | `natural range 0 to N/P−1` | column group `g`; lane `j` compares against slot `j + g·P` | **(new)** — the lane column mux of [plan.md:762-763](../project/plan.md#L762-L763) needs a select |
+| `row_src` | out | 5 | slot of the current row's box, i.e. `index_table(r)`; select for the shared 32:1 row-source mux | [architecture.md §9](architecture.md) |
+| `col_grp` | out | `natural range 0 to N/P−1` | column group `g`; lane `j` compares against slot `j + g·P` | **(new)** — the lane column mux of [architecture.md §9](architecture.md) needs a select |
 | `lane_valid` | in | 1 | lane 0's `valid_out`; cross-checked against the internal tag pipe (§7) | [iou_lane.vhd:57](../../src/components/iou_lane.vhd#L57) |
 | `lane_suppress` | in | P | the P lanes' `suppress` outputs | [iou_lane.vhd:58](../../src/components/iou_lane.vhd#L58) |
-| `done` | out | 1 | one-cycle pulse; `status` and `keep_mask` are final | **(new)** — "On `DONE`", [plan.md:657](../project/plan.md#L657) |
-| `status` | out | 8 | `STATUS_OK` or `STATUS_INTERNAL`, valid with `done` | [architecture.md §3](architecture.md), [plan.md:686](../project/plan.md#L686) |
+| `done` | out | 1 | one-cycle pulse; `status` and `keep_mask` are final | **(new)** — "On `DONE`", [architecture.md §3](architecture.md) |
+| `status` | out | 8 | `STATUS_OK` or `STATUS_INTERNAL`, valid with `done` | [architecture.md §3](architecture.md), [architecture.md §3](architecture.md) |
 | `keep_mask` | out | 32 | arrival-order survivors; held until the next `start` | [architecture.md §3](architecture.md) |
 
 Every item in the list below is either a port or internal:
@@ -113,7 +111,7 @@ Every item in the list below is either a port or internal:
 - **start handshake** — `start` in, `busy` out (§1).
 - **`box_store` read side** — *not a port of `nms_ctrl`*. The FSM never reads a payload or an
   area. It emits two selects, `row_src` (which box is the keeper for this row) and `col_grp`
-  (which column group the lanes read), and the muxes sit in the datapath (`nms_core`, C4)
+  (which column group the lanes read), and the muxes sit in the datapath (`nms_core`)
   beside `box_store`. The addresses are exactly those two values.
 - **`bitonic32` `keys_in` / `keys_out`** — `keys_in` is built by a concurrent assignment in
   `nms_core`, `K(i) = score(i) & not(to_unsigned(i, 5))` ([architecture.md §6](architecture.md)),
@@ -153,7 +151,7 @@ straight to `FILL`. The latency formula therefore holds at every `C`, including 
 - **Is every duration a constant?** Yes. `SORT`, `FILL`, `DRAIN` and `DONE` are compared against
   generics only, never against data. The one state that waits on anything is `IDLE`, which
   waits for `start`; that wait is before edge 0 and outside T. So
-  [plan.md:1061](../project/plan.md#L1061) (Tier 1 #1) holds, and so does its consequence: `present_mask`,
+  [architecture.md §9](architecture.md) — no trip count depends on the data — holds, and so does its consequence: `present_mask`,
   the scores and the overlap pattern cannot change how long a batch takes (§7 shows this for
   `present_mask = 0`).
 - **Which states overlap, and how does one state register express that?** Fill and resolve
@@ -220,7 +218,7 @@ General form, where every row follows from the one above it:
   cut fails the second. It guarantees nothing if `keys_in` changes mid-sort, and the check is
   skipped entirely at `PIPE_CUTS = 0`. `nms_ctrl` relies on exactly this and no more: `C` edges
   with a stable input, then read.
-- **Resolve trails fill by `L`** ([plan.md:773](../project/plan.md#L773)). On the timeline, the last group
+- **Resolve trails fill by `L`** ([architecture.md §9](architecture.md)). On the timeline, the last group
   of rank `r` is issued in the cycle after edge `C + r·G + G − 1`, and rank `r` resolves at edge
   `C + r·G + G − 1 + L + 2`. That is `L` lane stages, one `row_buf` capture and the resolve edge
   itself. The `L` offset is the lanes; the `+2` is the row buffer and the resolve register.
@@ -271,7 +269,7 @@ not the 32 × 32 matrix.
 ## 6. Latency derivation
 
 From §4 alone, write T as a sum of named terms, then compare with the spec formula
-`T = N²/P + L + C + 2` ([plan.md:540-544](../project/plan.md#L540-L544)), which charges SORT `C + 1`.
+`T = N²/P + L + C + 2` ([architecture.md §9](architecture.md)), which charges SORT `C + 1`.
 
 From §4, counting edges 0 through the edge that enters `DONE` (inclusive):
 
@@ -320,16 +318,16 @@ For each: what the FSM does, cycle by cycle if it matters, and the spec line it 
 
 | case | behaviour | spec |
 |---|---|---|
-| `present_mask = 0` | **Runs the normal fixed walk.** `valid_mask` loads as 0, so every resolve sees `kept = 0` and `keep_mask` stays 0; `done` comes after exactly T. No early exit, because an early exit is a data-dependent trip count, which would break Tier 1 #1 and #5 for one input. "Terminate immediately" is read as "the result is immediately determined", not "finish early". **Spec wording to change** (§9). | [plan.md:696-703](../project/plan.md#L696-L703) |
-| frame arrives while busy | `start` is ignored outside `IDLE`, with a simulation assertion warning that it happened. By the §1 start/busy rule, `frame_rx` never sends it: it blocks the `box_store` writes, remembers that it did, and replies `0x02` without starting. `nms_ctrl` finishes the current batch unaffected. Unreachable at 1 Mbaud (a frame takes 2.64 ms, a batch 0.78 µs), but defined. | L3, [plan.md:1168](../project/plan.md#L1168) |
+| `present_mask = 0` | **Runs the normal fixed walk.** `valid_mask` loads as 0, so every resolve sees `kept = 0` and `keep_mask` stays 0; `done` comes after exactly T. No early exit, because an early exit is a data-dependent trip count, which would break the determinism rule for one input. "Terminate immediately" is read as "the result is immediately determined", not "finish early". **Spec wording to change** (§9). | [architecture.md §3](architecture.md) |
+| frame arrives while busy | `start` is ignored outside `IDLE`, with a simulation assertion warning that it happened. By the §1 start/busy rule, `frame_rx` never sends it: it blocks the `box_store` writes, remembers that it did, and replies `0x02` without starting. `nms_ctrl` finishes the current batch unaffected. Unreachable at 1 Mbaud (a frame takes 2.64 ms, a batch 0.78 µs), but defined. | §1 (start/busy rule) |
 | `start` arrives during `DONE` | Ignored, like any `start` outside `IDLE`. `busy` is still `'1'` in `DONE`, so the §1 rule makes `frame_rx` reply `0x02` instead of losing the frame. `DONE` is not "almost idle". | §1 |
-| illegal state encoding | 5 states in 3 bits leaves 3 unused codes. The state register carries `fsm_safe_state = "reset_state"`, so Vivado's FSM encoding recovers to `IDLE` rather than hanging. A `when others` arm cannot do it: the `case` covers every enumeration value, so VHDL rejects the arm as redundant, and it says nothing about encodings synthesis leaves unused anyway. Recovery emits no `done`; the host times out (O7). | [architecture.md §10](architecture.md) |
-| CRC fail | Never reaches `nms_ctrl`: no `start`, and `frame_rx` asks for the `0x01` reply. The bad frame may already have overwritten `box_store` slots, which is harmless: no computation uses them, and the next good frame rewrites all 32 slots because the frame is fixed-length. | O7, [plan.md:1191](../project/plan.md#L1191) |
-| watchdog fires | **Replaced by two consistency checks** (deviation, §9). A cycle-count watchdog on a fixed counter walk can only fire if that same counter is broken, in which case it is counting with the broken counter. Instead `err` is set if **(a)** `lane_valid ≠ tag_v(L)` on any cycle — the lanes' real latency disagrees with the `LANE_LATENCY` the FSM was built for — or **(b)** `res_cnt ≠ N` at `DONE`, meaning a row was lost or never resolved. Either one makes `status = 0x03`. ~10 LUT, 1 FF. | [plan.md:866-871](../project/plan.md#L866-L871) |
-| `rst` asserted mid-batch | The synchronous reset returns `state` to `IDLE`, clears `tag_v`, `row_rdy`, `err` and `keep_mask`, and emits no `done`. The lanes' valid chains take the same `rst` ([iou_lane.vhd:174-178](../../src/components/iou_lane.vhd#L174-L178)), so no in-flight result can resolve into the next batch. The host sees no reply and times out (O7). The next `start` runs normally. | [architecture.md §10](architecture.md) |
+| illegal state encoding | 5 states in 3 bits leaves 3 unused codes. The state register carries `fsm_safe_state = "reset_state"`, so Vivado's FSM encoding recovers to `IDLE` rather than hanging. A `when others` arm cannot do it: the `case` covers every enumeration value, so VHDL rejects the arm as redundant, and it says nothing about encodings synthesis leaves unused anyway. Recovery emits no `done`; the host's read timeout reports it. | [architecture.md §10](architecture.md) |
+| CRC fail | Never reaches `nms_ctrl`: no `start`, and `frame_rx` asks for the `0x01` reply. The bad frame may already have overwritten `box_store` slots, which is harmless: no computation uses them, and the next good frame rewrites all 32 slots because the frame is fixed-length. | [architecture.md §3](architecture.md) |
+| watchdog fires | **Replaced by two consistency checks** (deviation, §9). A cycle-count watchdog on a fixed counter walk can only fire if that same counter is broken, in which case it is counting with the broken counter. Instead `err` is set if **(a)** `lane_valid ≠ tag_v(L)` on any cycle — the lanes' real latency disagrees with the `LANE_LATENCY` the FSM was built for — or **(b)** `res_cnt ≠ N` at `DONE`, meaning a row was lost or never resolved. Either one makes `status = 0x03`. ~10 LUT, 1 FF. | [architecture.md §9](architecture.md) |
+| `rst` asserted mid-batch | The synchronous reset returns `state` to `IDLE`, clears `tag_v`, `row_rdy`, `err` and `keep_mask`, and emits no `done`. The lanes' valid chains take the same `rst` ([iou_lane.vhd:174-178](../../src/components/iou_lane.vhd#L174-L178)), so no in-flight result can resolve into the next batch. The host sees no reply, and its read timeout reports it. The next `start` runs normally. | [architecture.md §10](architecture.md) |
 | sorter still holds the previous batch (no reset) | Cannot be observed. `index_table` is captured at edge `C`, after `C` edges with `keys_in` stable, so every cut register holds the current batch ([tb_bitonic32](../../test/tb_bitonic32.vhd#L166-L192) pins exactly this). The stale output during edges `0 … C−1` is loaded into `index_table` and then overwritten, never read. | [bitonic32.vhd:26-28](../../src/components/bitonic32.vhd#L26-L28) |
-| `idx_r` travels with its row | `tag_idx` shifts alongside `tag_v` through `L` stages and lands in `row_idx` on the same edge as `row_buf`. `index_table` therefore has **one** read port (fill, via `row_src`), and resolve never indexes it. 20 FF instead of a second 32:1 × 5 b mux. | [plan.md:758-761](../project/plan.md#L758-L761) |
-| a kept box's row touching earlier ranks | **The whole row is applied, unmasked.** That includes bits of earlier ranks and the diagonal: `suppresses(k, k)` is always true (`I = U` gives `256·U ≥ 128·U`, and `0 ≥ 0` for a zero-area box), and all 640 committed `.trace` rows carry their own bit. This is harmless because every resolve clears `valid_mask(idx_r)` whether the box was kept or not, and `valid_mask` only ever loses bits, so every earlier rank's bit is already 0. That is P10's argument. A simulation-only assertion keeps it true under future edits: at each resolve, `valid_mask and resolved = 0`, where `resolved` is a sim-only mask of slots already resolved (synthesis trims it, since only an `assert` reads it). | P10, [plan.md:1147](../project/plan.md#L1147) |
+| `idx_r` travels with its row | `tag_idx` shifts alongside `tag_v` through `L` stages and lands in `row_idx` on the same edge as `row_buf`. `index_table` therefore has **one** read port (fill, via `row_src`), and resolve never indexes it. 20 FF instead of a second 32:1 × 5 b mux. | [architecture.md §4](architecture.md) |
+| a kept box's row touching earlier ranks | **The whole row is applied, unmasked.** That includes bits of earlier ranks and the diagonal: `suppresses(k, k)` is always true (`I = U` gives `256·U ≥ 128·U`, and `0 ≥ 0` for a zero-area box), and all 640 committed `.trace` rows carry their own bit. This is harmless because every resolve clears `valid_mask(idx_r)` whether the box was kept or not, and `valid_mask` only ever loses bits, so every earlier rank's bit is already 0. That is the keeper-barrier argument. A simulation-only assertion keeps it true under future edits: at each resolve, `valid_mask and resolved = 0`, where `resolved` is a sim-only mask of slots already resolved (synthesis trims it, since only an `assert` reads it). | keeper-barrier invariant ([nms_primer.md](nms_primer.md)) |
 
 Resolve itself, as concurrent logic feeding one clocked update under `row_rdy`:
 
@@ -340,7 +338,7 @@ keep_mask  ← keep_mask or (onehot(row_idx) when kept else 0)
 res_cnt    ← res_cnt + 1
 ```
 
-This is [plan.md:774-775](../project/plan.md#L774-L775) exactly, and the same step as `nms_allpairs` in
+This is [architecture.md §9](architecture.md) exactly, and the same step as `nms_allpairs` in
 [model.py](../../models/nms/model.py).
 
 ---
@@ -359,7 +357,7 @@ This is [plan.md:774-775](../project/plan.md#L774-L775) exactly, and the same st
     (`row_src = order(r)`), groups arrive ascending, and there are exactly `N·G` issues.
   - **No `box_store`.** The payload and area muxes sit outside `nms_ctrl` (§2). The lane itself
     is already bit-exact against the model by `tb_iou_lane`. Real lanes and a real `box_store`
-    meet this FSM at C4 in `tb_nms_top`.
+    meet this FSM at integration, in `tb_nms_top`.
   - The testbench drives `start`, `present_mask` (the last line of `.hex`) and `rst`, holds
     `keys` stable from before `start` until `done`, and loops over `cases.txt` like the other
     testbenches, so new cases are covered without editing VHDL.
@@ -401,7 +399,7 @@ This is [plan.md:774-775](../project/plan.md#L774-L775) exactly, and the same st
   `nms_ctrl.vhd` and must fail the unmodified testbench, recorded in
   [build_log.md](../project/build_log.md) as for `cas` and `bitonic32`:
 
-  **Run 2026-09-24** (results in [build_log.md](../project/build_log.md) C3). Every mutant below was
+  **Run 2026-09-24** (results in the [build log](../project/build_log.md), the `nms_ctrl` entry). Every mutant below was
   killed, except the one marked:
 
   | mutant | caught by |
@@ -421,16 +419,16 @@ This is [plan.md:774-775](../project/plan.md#L774-L775) exactly, and the same st
 
 | # | decision | options | chosen | why |
 |---|---|---|---|---|
-| O4 | LED semantics | [plan.md:1185](../project/plan.md#L1185) | **Deferred to `nms_top`**; recommended `keep_mask(15:0)` | Not this module's concern: `keep_mask` is a port and `status` is available beside it. The low half of the mask is the one display that works with no host attached ([plan.md:658](../project/plan.md#L658)). |
-| O6 | where `P` / `PIPE_CUTS` are set | [plan.md:1189](../project/plan.md#L1189) | Generics on `nms_ctrl` defaulting to `nms_pkg`, passed through from `nms_top`, overridable with `ghdl -r -gP=…` | One testbench sweeps every configuration (§8) without editing source. It is the pattern `bitonic32` and `iou_lane` already use. |
+| — | LED semantics | low 16 bits of `keep_mask`, or a status display | **Deferred to `nms_top`**; recommended `keep_mask(15:0)` | Not this module's concern: `keep_mask` is a port and `status` is available beside it. The low half of the mask is the one display that works with no host attached. |
+| — | where `P` / `PIPE_CUTS` are set | generics, or constants | Generics on `nms_ctrl` defaulting to `nms_pkg`, passed through from `nms_top`, overridable with `ghdl -r -gP=…` | One testbench sweeps every configuration (§8) without editing source. It is the pattern `bitonic32` and `iou_lane` already use. |
 | — | SORT costs `C` or `C + 1` | §6 | **`C + 1`** | The `+1` is `index_table`, and timing requires it (§6). |
 | — | `PIPE_CUTS` value | 2 or 8 | **8 → T = 78** | 2 reaches only 53.9 MHz ([hardware.md §5](../results/hardware.md)). **Spec change — applied** to architecture.md §9, `params.py` and `nms_pkg.vhd`. |
-| — | `present_mask = 0` | early exit, or fixed walk | **Fixed walk** | Keeps latency data-independent (§7). **Spec wording change — applied** in architecture.md §3 and plan.md Part 2. |
-| — | watchdog | cycle counter, or consistency check | **Consistency check** (`lane_valid` vs tag pipe; `res_cnt = N`) | Detects a real class of control bug rather than re-measuring the counter it guards (§7). **plan.md Part 2 updated to match.** |
+| — | `present_mask = 0` | early exit, or fixed walk | **Fixed walk** | Keeps latency data-independent (§7). **Spec wording change — applied** in architecture.md §3. |
+| — | watchdog | cycle counter, or consistency check | **Consistency check** (`lane_valid` vs tag pipe; `res_cnt = N`) | Detects a real class of control bug rather than re-measuring the counter it guards (§7). **The architecture spec was updated to match.** |
 | — | where `LOAD` lives | `nms_ctrl`, or `frame_rx` | **`frame_rx`** | §1. Clarification only: architecture.md §9's FSM line describes the system, and still does. |
-| — | resolve cadence | "one rank per cycle" ([plan.md:773](../project/plan.md#L773)) | **One resolve per `G` cycles**, each taking one cycle | Rows complete every `G` cycles, so resolve fires every other cycle at P = 16 and every cycle at P = 32. plan.md's Gantt chart already draws it this way; only the sentence is loose. |
+| — | resolve cadence | "one rank per cycle" ([architecture.md §9](architecture.md)) | **One resolve per `G` cycles**, each taking one cycle | Rows complete every `G` cycles, so resolve fires every other cycle at P = 16 and every cycle at P = 32. The original timing chart already drew it this way; only the sentence was loose. |
 | — | row buffer register | resolve from lane outputs directly (T − 1), or through `row_buf` | **Through `row_buf`** | Resolve sees a whole stable row whatever `P` is. The cost is 1 cycle (10 ns), and it matches architecture.md §8's 2-row buffer (§6). |
-| — | row-source path timing | measure at C4, or add an issue register now | **Registers are needed — confirm the count at C4; absorbed through `LANE_LATENCY`** | With port paths constrained, lane stage 1 alone takes 7.16 ns ([hardware.md](../results/hardware.md) §5). That leaves 2.84 ns for the 32:1 × 72 b row mux and its 16-lane fanout, which is tight. If C4 misses, a registered keeper/candidate stage in the datapath is one more lane stage. `nms_ctrl` takes it as `LANE_LATENCY = 5` with no logic change (the tag pipe and `DRAIN` are both built from the generic), and T becomes 79. **Update after C2:** the measured segments sum to ≈ 16.8 ns (`cnt` → `row_src` 5.71, row mux 3.95, lane stage 1 7.16), so one stage is too marginal. **Settled at C4:** placed-core WNS is −4.886 ns with no registers, +0.087 ns with 1 and +0.202 ns with 2. `nms_core` ships `ISSUE_REGS = 2`: this FSM is instantiated with `LANE_LATENCY = 6`, unchanged, and the core's T is 80. The `T = 78` elsewhere in this document is `nms_ctrl` at its own default `LANE_LATENCY = 4`, which remains correct for the module in isolation ([hardware.md](../results/hardware.md) §5). |
+| — | row-source path timing | measure at integration, or add an issue register now | **Registers are needed — confirm the count at integration; absorbed through `LANE_LATENCY`** | With port paths constrained, lane stage 1 alone takes 7.16 ns ([hardware.md](../results/hardware.md) §5). That leaves 2.84 ns for the 32:1 × 72 b row mux and its 16-lane fanout, which is tight. If integration misses timing, a registered keeper/candidate stage in the datapath is one more lane stage. `nms_ctrl` takes it as `LANE_LATENCY = 5` with no logic change (the tag pipe and `DRAIN` are both built from the generic), and T becomes 79. **Update after `box_store`:** the measured segments sum to ≈ 16.8 ns (`cnt` → `row_src` 5.71, row mux 3.95, lane stage 1 7.16), so one stage is too marginal. **Settled at integration:** placed-core WNS is −4.886 ns with no registers, +0.087 ns with 1 and +0.202 ns with 2. `nms_core` ships `ISSUE_REGS = 2`: this FSM is instantiated with `LANE_LATENCY = 6`, unchanged, and the core's T is 80. The `T = 78` elsewhere in this document is `nms_ctrl` at its own default `LANE_LATENCY = 4`, which remains correct for the module in isolation ([hardware.md](../results/hardware.md) §5). |
 
 ---
 
@@ -439,29 +437,29 @@ This is [plan.md:774-775](../project/plan.md#L774-L775) exactly, and the same st
 Judge the design against these before writing VHDL. For each, cite the section that satisfies it,
 or say why it does not.
 
-- [x] No trip count depends on the data ([plan.md:1061](../project/plan.md#L1061)): every state exit
+- [x] No trip count depends on the data ([architecture.md §9](architecture.md)): every state exit
       compares `cnt` with a generic (§3). `present_mask = 0` runs the full walk (§7).
 - [x] Latency is an equality, and §6's T is the number the testbench will assert. T = 78 at
       P = 16, C = 8, asserted from both sides from the generics (§6, §8), and it now agrees with
       architecture.md §9 and `nms_pkg.LATENCY_CYCLES`.
-- [x] RTL fits the VHDL-93 subset ([plan.md:833-843](../project/plan.md#L833-L843)). The design needs
+- [x] RTL fits the VHDL-93 subset ([architecture.md §10](architecture.md)). The design needs
       integer-range counters and ports, a `case` on an enumerated state, and `if generate` pairs
       for `C = 0` and `G = 1`, all of which are VHDL-93. The only 2008 construct (the external
       name) is in the testbench.
 - [x] Processes are clocked only; combinational logic is concurrent assignments
-      ([plan.md:845-850](../project/plan.md#L845-L850)). `row_src`, `col_grp`, `issue_valid`, `busy`,
+      ([architecture.md §10](architecture.md)). `row_src`, `col_grp`, `issue_valid`, `busy`,
       `done`, `status`, `kept` and the next-mask expressions are concurrent (§3, §7). One
       clocked process holds the registers of §5.
 - [x] The only asynchronous input is UART RX, and it is not this module's concern
-      ([plan.md:864](../project/plan.md#L864)). Every `nms_ctrl` input is synchronous to `clk` (§2).
+      ([architecture.md §10](architecture.md)). Every `nms_ctrl` input is synchronous to `clk` (§2).
 - [x] Every port in §2 has a spec source or is marked **(new)** with a reason: three are new
       (`issue_valid`, `col_grp`, `done`), each justified in its row.
 - [x] Every corner case in §7 has a behaviour and a test in §8. `present_mask = 0`, start while
       busy, `rst` mid-batch, stale sorter (back to back) and watchdog (stub `L + 1`) are directed
       tests. CRC fail is tested in `tb_frame_rx`, because by §1 it never reaches this module.
-      `idx_r` and P10 are covered by `.trace` checks 2–3 and the resolved-slot assertion.
+      `idx_r` and the keeper-barrier invariant (§7) are covered by `.trace` checks 2–3 and the resolved-slot assertion.
 
 **Implemented 2026-09-24:** `src/components/nms_ctrl.vhd` and `test/tb_nms_ctrl.vhd`. They pass
 at every sweep point, the mutation run is above, and the module measures 382 LUT / 300 FF /
-175 MHz ([build_log.md](../project/build_log.md) C3). Next is C4, which wires the row-source mux and has to
+175 MHz ([build log](../project/build_log.md), the `nms_ctrl` entry). Next is the `nms_core` integration, which wires the row-source mux and has to
 confirm the §9 timing row.

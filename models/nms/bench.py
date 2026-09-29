@@ -12,7 +12,7 @@ Also probes thread-pool dispatch cost, because "use more cores" is the obvious o
 to any single-threaded baseline and at N=32 it does not survive contact with the numbers.
 
 Every figure here belongs in the report next to a named processor. An unqualified "faster
-than a CPU" claim is not supportable: see ``docs/project/build_log.md`` and the plan's Part 1e.
+than a CPU" claim is not supportable: see ``docs/results/benchmarks.md``.
 """
 
 from __future__ import annotations
@@ -235,7 +235,7 @@ def time_samples(
 
 
 def summarise(samples: list[float]) -> dict[str, float]:
-    """Return min, median, p99 and max: never a mean alone (plan.md Phase E, E.3).
+    """Return min, median, p99 and max: never a mean alone (docs/results/benchmarks.md §3).
 
     Args:
         samples: Durations, any unit.
@@ -366,7 +366,7 @@ def format_report(timings: list[Timing], *, accelerator_us: float | None = None)
         "     is inherently serial because each keeper depends on all previous ones.",
         "",
         "  Always name the processor class alongside any speedup: this is a 13th-gen",
-        "  laptop CPU. See docs/project/plan.md Part 1e -- against tuned C/AVX2 the accelerator",
+        "  laptop CPU. See docs/results/benchmarks.md -- against tuned C/AVX2 the accelerator",
         "  is roughly at parity, and end to end over the UART the CPU wins outright.",
     ]
     return "\n".join(lines)
@@ -426,7 +426,7 @@ def format_suite(suite: dict[str, list[Timing]]) -> str:
         "  what a CPU pays for and P parallel lanes get for free -- which is precisely the",
         "  argument for the restructure, quantified.",
         "",
-        "  Always name the processor class alongside any speedup. See docs/project/plan.md Part 1e:",
+        "  Always name the processor class alongside any speedup. See docs/results/benchmarks.md:",
         "  against tuned C/AVX2 the accelerator is roughly at parity, and end to end over",
         "  the UART the CPU wins outright.",
     ]

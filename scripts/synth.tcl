@@ -1,10 +1,10 @@
 # Out-of-context synthesis and implementation of one module, for the area and timing
-# gates in docs/project/plan.md (B2.2, B3.2, B4.2).
+# figures in docs/results/hardware.md.
 #
 #   vivado -mode batch -source scripts/synth.tcl -tclargs <module> [period_ns] [G=V ...]
 #
 # Invoked through `make synth MOD=<module>`. Numbers are taken after route_design, not
-# after synth_design: a post-synthesis estimate omits routing delay, and P1 in the plan
+# after synth_design: a post-synthesis estimate omits routing delay, and the 100 MHz claim
 # is a claim about real Fmax rather than about the logic depth alone.
 
 set mod [lindex $argv 0]

@@ -1,6 +1,6 @@
 """What every result row must name: machine, clock, governor, library versions.
 
-plan.md Phase E, E.3: every row carries the commit, CPU, frequency, governor, temperature and
+docs/results/benchmarks.md §3: every row carries the commit, CPU, frequency, governor, temperature and
 library versions. On a Raspberry Pi it also carries ``vcgencmd`` readings taken before and
 after the run, and a run with the throttled flag set at either point is invalid.
 """

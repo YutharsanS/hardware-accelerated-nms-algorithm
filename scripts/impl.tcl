@@ -9,7 +9,7 @@
 # the one the board will actually run at.
 #
 # ILA (`make impl ILA=1`): also build an Integrated Logic Analyzer on the core's handshake
-# -- start, done, busy, settled, we -- to capture T on silicon (docs/project/plan.md Phase E, E3).
+# -- start, done, busy, settled, we -- to capture T on silicon (docs/user_guide.md §8).
 # The ILA is Vivado's catalogue IP, generated here as `ila_core` and instantiated by
 # nms_top's ILA generic: the BASIC licence refuses create_debug_core (post-synthesis
 # insertion) but allows the IP. It builds into build/impl_ila/ and writes the probe file

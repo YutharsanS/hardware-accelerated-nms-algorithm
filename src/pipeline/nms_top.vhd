@@ -14,11 +14,11 @@
 --   * BTNC, debounced: it must read pressed for DEBOUNCE consecutive clocks (10 ms by
 --     default) before it counts, so contact bounce cannot produce a train of resets.
 --
--- LEDs (plan.md O4): the low 16 bits of the last keep_mask -- a visual check with no host
+-- LEDs: the low 16 bits of the last keep_mask -- a visual check with no host
 -- attached. keep_mask is held until the next batch starts, and cleared by reset.
 --
 -- ILA (debug builds only, `make impl ILA=1`): an Integrated Logic Analyzer watching the
--- frame_rx <-> nms_core handshake, to capture T on silicon (plan.md Phase E, E3). It only
+-- frame_rx <-> nms_core handshake, to capture T on silicon (docs/user_guide.md §8). It only
 -- watches; nothing it does reaches the datapath or the wire. With the default ILA = false
 -- the generate below is empty and the netlist is exactly the production one. The core
 -- `ila_core` is generated from Vivado's IP catalogue by scripts/impl.tcl, because the BASIC

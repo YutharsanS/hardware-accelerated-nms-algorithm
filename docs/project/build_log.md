@@ -1699,3 +1699,50 @@ pipeline and stress used `performance`. The ARM clock read 1.8 GHz in every run,
 idle runs repeat within 4.4%, so `ondemand` held full speed under a continuous benchmark.
 The pipeline run reached 74 °C, 6 °C below the Pi 4's soft-throttle point, so longer runs
 would need better cooling.
+
+---
+
+### Close-out: figures, repository and documentation                         2026-09-29
+
+**The project is closed.** The build is verified on silicon, and the evaluation has run on a
+laptop and a Raspberry Pi 4. This entry records the tidy-up that made the repository a
+finished project page.
+
+- **The figures were redrawn to explain themselves** (`efe12d9`). The old ones carried meaning
+  in line style (solid laptop, dashed Pi, a bold block line) that nothing on the figure
+  explained. `benchmarks/figstyle.py` now fixes one visual language:
+  - no meaning is carried by line style alone;
+  - every mark is named on the figure itself;
+  - the block is always the same labelled violet line;
+  - a subtitle states the conditions.
+
+  The redrawn figures quote the tables' own p99 (nearest rank), not an interpolated one, so
+  every figure matches a table. A new headline figure (`report.py --headline`) sets every
+  software NMS's median, p99 and worst p99 under load against the block.
+- **Removed:**
+  - the `hello_tb` smoke test (`5b8ed75`), which the ten real testbenches make redundant;
+  - the unrun E7 other-parts sweep (`771beb4`), keeping only its fractional-BRAM parser fix;
+  - local clutter: Vivado crash dumps, `.Xil/`, `clockInfo.txt`, downloaded YOLO weights.
+- **The 3DGS study moved to `explorations/gaussian_splatting/`** (`46a73f3`, `04708f8`),
+  self-contained with its findings as its README.
+- **The docs were categorised** (`262b8f5`) into `docs/design/`, `docs/results/` and
+  `docs/project/`, with a user guide and an index at `docs/` root.
+  - `overview.md` was retired; `NMS.md` became `design/nms_primer.md`, rewritten for the
+    integer model; `development_guide.md` merged into the user guide.
+  - Every reference was rewritten by script, in Markdown, VHDL, Python, Tcl, CLAUDE.md and
+    the notebook.
+  - `tests/test_docs_links.py` now fails the build on any broken relative link.
+  - plan.md records the finish (Pi 4, no E7), and `future_work.md` lists everything not done.
+- **The README became the project page.** It leads with the claim the evidence supports: a
+  fixed 1.13 µs worst case, 3.4× below compiler-optimised C's p99 on a 4.7 GHz core, and ahead
+  of every software NMS tested on the Pi 4 on all but one degenerate input. It keeps a short
+  Scope section stating each claim's conditions.
+
+**Declined, and recorded in `future_work.md`:**
+- a literature table (E5);
+- running E7 once before deleting it;
+- the D2 lane-count curve (so P is presented as fixed at 16);
+- merging to `main` with a tagged release.
+
+**The new README becomes the GitHub landing page only once `prototype/bench` is merged to
+`main`.**

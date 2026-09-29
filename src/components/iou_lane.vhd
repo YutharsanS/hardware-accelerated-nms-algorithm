@@ -14,7 +14,7 @@
 --
 -- Areas arrive as inputs. They are per-BOX, not per-pair, so box_store computes all 32
 -- once during LOAD; recomputing them here would cost a second multiplier per lane and was
--- the error behind the plan's original "3 DSPs per lane" figure. One lane is 1 DSP.
+-- the error behind an early "3 DSPs per lane" estimate. One lane is 1 DSP.
 --
 -- FOUR REGISTERED STAGES, so LANE_LATENCY = 4:
 --   1  min/max, subtract, clamp        -> w, h
@@ -168,7 +168,7 @@ begin
             -- pair. The lane computes every cycle, valid or not, and in the integrated core
             -- a slot's new coordinates land one edge before its new area. The inconsistent
             -- pair that results is never marked valid, so it is harmless, but ungated this
-            -- check fired on it (found at C4; tb_iou_lane only ever feeds consistent pairs).
+            -- check fired on it (found at integration; tb_iou_lane only ever feeds consistent pairs).
             assert valid_d(2) = '0' or area_sum >= resize(s2_inter, UNION_W)
                 report "iou_lane: union underflow, I = "
                      & integer'image(to_integer(s2_inter)) & " exceeds the area sum "

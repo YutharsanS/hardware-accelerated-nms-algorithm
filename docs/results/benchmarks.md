@@ -3,7 +3,7 @@
 How the FPGA NMS block compares with the software NMS that edge vision pipelines actually run:
 what was measured, how, on which machines, and what the numbers do and do not support.
 
-This document collects the Phase E evaluation ([plan.md](../project/plan.md), Phase E) in one place. The
+This document collects the evaluation in one place. The
 raw results are committed under [benchmarks/results/](../../benchmarks/results/); the per-stage
 narrative, including every bug found on the way, is in [build_log.md](../project/build_log.md); area and
 timing of the RTL itself are in [hardware.md](hardware.md) §1–5. Every figure below is taken from
@@ -11,7 +11,7 @@ a committed result file, and each section names the file.
 
 **Status (2026-09-29):** the block's latency is measured in simulation and on silicon; software
 is measured on a laptop and on a Raspberry Pi 4, idle and under three kinds of load. Not yet
-measured: the same RTL on other FPGA parts (E7), a literature comparison (E5), and a Pi 5 (§9).
+measured: the same RTL on other FPGA parts, a literature comparison, and a Pi 5 (§9, §10).
 
 ---
 
@@ -158,7 +158,7 @@ table. Idle runs are repeated; **every median must agree within 10%**.
 | libraries | torch 2.14+cpu, torchvision 0.29, OpenCV 5.0.0, numpy 2.5 | same | — |
 | results | `cpu-PoseidonD-2026-09-28-*` | `cpu-raspberrypi-2026-09-29-*` | `onchip-ila-2026-09-29.csv` |
 
-The plan names a Raspberry Pi 5 (Cortex-A76) as the main competitor; it was not available. The
+A Raspberry Pi 5 (Cortex-A76) was the intended main competitor; it was not available. The
 Pi 4's A72 is slower than the A76, so the Pi 4 comparison favours the block more than a Pi 5
 would. It is, however, the class of ARM core that sits beside accelerators in edge SoCs.
 
@@ -282,8 +282,8 @@ the shape of the curve, not reference timings.
   the threshold, so real data would trigger this far less often — but it is a real difference,
   and the reason the spec pins `≥` and the RTL and golden model agree bit for bit.
 - **Tie order.** OpenCV disagrees with the spec's lower-index-first tie rule on 173 hostile
-  batches, all with tied scores. torchvision matches it everywhere. (The plan had assumed the
-  opposite.)
+  batches, all with tied scores. torchvision matches it everywhere. (The opposite had been
+  expected.)
 
 ---
 
@@ -330,7 +330,7 @@ faster; below 1, software is.
 
 The block is fixed at N = 32. To check whether that meets a real need, YOLOv8n and YOLO11n were
 run on 500 COCO val2017 images and the candidates entering NMS counted, per image and per
-(image, class) — multi-class NMS runs one batch per class ([build_log.md](../project/build_log.md), E0).
+(image, class) — multi-class NMS runs one batch per class ([build_log.md](../project/build_log.md), the feasibility entry).
 
 | confidence > 0.25 | YOLOv8n | YOLO11n |
 |---|---|---|
@@ -364,13 +364,15 @@ application constraint, stated as an assumption**, not something COCO demonstrat
 
 ## 10. Not yet measured
 
-| item | plan stage | needs |
-|---|---|---|
-| the same RTL on other parts: −2/−3 Artix, Zynq-7020, Kintex-7 — Fmax, area, T in ns | E7 | Vivado only (tooling built, `make parts`) |
-| the lane-count curve P = 1…32 on the Basys 3 part | D2 | Vivado only (same tool) |
-| published hardware NMS designs, normalised | E5 | literature |
-| a Raspberry Pi 5 | E1/E2 | the board |
-| the UART round trip at the FTDI default 16 ms timer | D3 | the board |
+| item | needs |
+|---|---|
+| the same RTL on other parts: −2/−3 Artix, Zynq-7020, Kintex-7 — Fmax, area, T in ns | Vivado only |
+| the lane-count curve P = 1…32 on the Basys 3 part | Vivado only |
+| published hardware NMS designs, normalised | literature |
+| a Raspberry Pi 5 | the board |
+| the UART round trip at the FTDI default 16 ms timer | the board |
+
+Each is described, with where to start, in [future_work.md](../project/future_work.md).
 
 ---
 
@@ -399,8 +401,8 @@ make program                                         # restore the production bi
 ```
 
 Each command writes `<target>-<host>-<date>-<load>.{csv,json}` plus every raw sample, and exits
-non-zero if any answer disagrees with its reference or a Pi throttled. The harness is described
-in [plan.md](../project/plan.md) E.4; its tests are `benchmarks/test_*.py`.
+non-zero if any answer disagrees with its reference or a Pi throttled. The harness is
+described in [user_guide.md](../user_guide.md) §9; its tests are `benchmarks/test_*.py`.
 
 ## 12. Result files
 

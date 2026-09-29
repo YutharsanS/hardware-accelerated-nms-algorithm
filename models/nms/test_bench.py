@@ -1,4 +1,4 @@
-"""B1.4 gate: every implementation agrees on keep_mask, including the float one."""
+"""Every implementation agrees on keep_mask, including the float one."""
 
 from __future__ import annotations
 
@@ -117,11 +117,11 @@ def test_thread_pool_overhead_is_measurable() -> None:
 
 
 def test_predicate_agrees_with_a_vectorised_form_over_a_million_pairs() -> None:
-    """B4.1's Python half: 10**6 pairs, scalar model against a numpy reimplementation.
+    """The lane check's Python half: 10**6 pairs, scalar model against a numpy reimplementation.
 
     Driving a million pairs through GHDL would mean either a ~50 MB vector file or an LFSR
     mirrored bit-exactly in VHDL and Python -- and that mirror would itself need a gate.
-    Splitting it is what the plan chose: 15,120 pairs through the RTL from file, and this
+    Splitting it is the chosen design: 15,120 pairs through the RTL from file, and this
     volume in Python, where the two implementations are genuinely independent (Python's
     unbounded ints and scalar branches against numpy's int64 arrays and where-free
     arithmetic).

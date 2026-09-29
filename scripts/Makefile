@@ -14,14 +14,14 @@
 #   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
-#   make bench           benchmark NMS against its competitors (docs/project/plan.md Phase E):
+#   make bench           benchmark NMS against its competitors (docs/user_guide.md §9):
 #                        TARGET=cpu|fpga, LOAD=none|pipeline|concurrent|stress, PORT=...,
 #                        BENCH_ARGS="--impls c_scalar opencv --cases hostile"
 #   make bench-report    merge benchmarks/results/*.csv into Markdown tables
 #   make xsim TB=tb_x    the same testbench under Vivado xsim, as a second simulator
 #   make clean           remove build artefacts
 #
-# Language policy (docs/project/plan.md Part 2): synthesisable RTL is written in the VHDL-93
+# Language policy (docs/design/architecture.md §10): synthesisable RTL is written in the VHDL-93
 # subset so Vivado's partial VHDL-2008 support can never bite, while testbenches use
 # VHDL-2008 for HREAD. Everything is *analysed* at --std=08, which accepts both.
 
@@ -34,9 +34,9 @@ GHDL_FLAGS = --std=$(STD) --workdir=$(WORKDIR)
 # combinational sensitivity list, which is a simulation/synthesis mismatch and is *not*
 # enabled by default.
 #
-# --warn-error was held back until B2.1 because GHDL has no per-warning severity, so
+# --warn-error was held back until the first modules were clean because GHDL has no per-warning severity, so
 # turning it on before a clean baseline exists fails the build on benign categories such
-# as unbound components. As of B2.1 the whole tree analyses and elaborates with zero
+# as unbound components. Since then the whole tree analyses and elaborates with zero
 # warnings, so a new warning now means new code, and it stops the build. If a future
 # module trips a category that is genuinely benign, override for that run rather than
 # weakening the default:  make test WARN=-Wall
@@ -87,11 +87,11 @@ TB_ALL  = $(basename $(notdir $(TB_SRC)))
 # bitonic32 is verified purely combinational, at the old default of two cuts, and at the
 # shipped eight (the lowest that meets 100 MHz), from one testbench that takes the latency
 # as a generic. Running only the shipped configuration would leave the combinational path
-# -- the PIPE_CUTS=0 point in B3.2's timing sweep -- unverified for correctness.
+# -- the PIPE_CUTS=0 point in the sorter's timing sweep -- unverified for correctness.
 SWEEP_tb_bitonic32 = -gPIPE_CUTS=0 -gPIPE_CUTS=2 -gPIPE_CUTS=8
 
 # The lane runs at the shipped threshold and at the maximum. Only T_INT=255 drives the
-# RHS above 2**31; see docs/project/build_log.md B4.1 for why the 33rd bit stays unreachable.
+# RHS above 2**31; see docs/project/build_log.md (the iou_lane entry) for why the 33rd bit stays unreachable.
 SWEEP_tb_iou_lane  = -gT_INT=128 -gT_INT=255
 
 # The control FSM runs at the shipped point, the old sorter default, the combinational
@@ -151,7 +151,7 @@ lint:
 	$(PYTHON) ruff check $(PYLINT_SRC)
 
     # pytest exits 5 when it collects nothing, which is expected only until the first
-    # test lands in B1.1. Once tests exist that code cannot occur, so this tolerance
+    # test lands. Once tests exist that code cannot occur, so this tolerance
     # never masks a real failure.
 pytest:
 	@$(PYTHON) pytest -q; rc=$$?; \
@@ -188,12 +188,12 @@ $(TB_ALL): analyse
 # --- Vivado ------------------------------------------------------------------------
 
 # Area and timing are measured after route_design, not after synth_design: a post-synthesis
-# number omits routing delay, and P1 is a claim about real Fmax. PERIOD sets the clock
+# number omits routing delay, and the 100 MHz claim is about real Fmax. PERIOD sets the clock
 # constraint the slack is measured against; GENERICS passes through to synth_design, which
-# is how B3.2 sweeps PIPE_CUTS.
+# is how the sorter's PIPE_CUTS sweep was run.
 #
 #   make synth MOD=bitonic32 PERIOD=20 GENERICS="PIPE_CUTS=0"
-# Second-opinion simulation under Vivado xsim (docs/project/plan.md L6): two independent simulators
+# Second-opinion simulation under Vivado xsim (docs/user_guide.md §2): two independent simulators
 # agreeing is far stronger evidence than one. Same RTL, same testbench, same vectors. It runs
 # in build/xsim, with a `models` symlink so the testbenches' repository-relative vector
 # paths resolve unchanged. xsim reports assertion errors and carries on rather than
@@ -223,7 +223,7 @@ impl:
 	vivado -mode batch -nolog -nojournal -source scripts/impl.tcl -tclargs $(GENERICS) \
 	    $(if $(filter 1,$(ILA)),ILA)
 
-# Capture T on silicon (docs/project/plan.md Phase E, E3): program the ILA build from
+# Capture T on silicon (docs/user_guide.md §8): program the ILA build from
 # `make impl ILA=1`, capture WINDOWS batches sent by the host, then check that every one
 # measures start -> done = T and draw the first as docs/images/onchip_latency.png.
 #   make ila [WINDOWS=16] [PORT=/dev/ttyUSB1]
@@ -256,11 +256,11 @@ ARGS ?= --selftest
 host:
 	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
 
-# Benchmark NMS against its competitors (docs/project/plan.md Phase E, E.4). The target names what
+# Benchmark NMS against its competitors (docs/user_guide.md §9). The target names what
 # is measured and the results name which machine, so the same command runs on the laptop
 # or the Pi 5. Results land in benchmarks/results/<target>-<host>-<date>-<load>.*
-#   make bench                                    every software variant here, idle (E1)
-#   make bench LOAD=pipeline                      a YOLO inference before each call (E2)
+#   make bench                                    every software variant here, idle
+#   make bench LOAD=pipeline                      a YOLO inference before each call
 #   make bench TARGET=fpga PORT=/dev/ttyUSB1      the board over the UART, end to end
 # The cpu target pulls the `bench` extra (torch CPU, OpenCV); detector loads add
 # `bench-load` (ultralytics). The fpga target needs neither.
@@ -275,7 +275,7 @@ bench:
 	    --port $(PORT) $(BENCH_ARGS)
 
 # Merge every run into the tables for docs/results/hardware.md; HIST=docs/images also draws the
-# E2 histograms (needs the bench extra for matplotlib).
+# under-load histograms (needs the bench extra for matplotlib).
 HIST ?=
 bench-report:
 	$(PYTHON) $(if $(HIST),--extra bench) python -m benchmarks.report $(if $(HIST),--hist $(HIST))

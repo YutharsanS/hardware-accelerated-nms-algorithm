@@ -3,7 +3,7 @@
 ``--target cpu`` times every software implementation on this machine; ``--target fpga``
 times the Basys 3 over the UART, end to end. The target names *what* is measured and the
 results name *which machine*, so the same command runs on the laptop or on the Pi 5
-(plan.md Phase E, E.4).
+(docs/user_guide.md §9).
 
 ``--load`` sets what else the machine is doing: ``none`` (idle), ``pipeline`` (a detector inference
 before every timed call, in this process), ``concurrent`` (a detector in another process)
@@ -64,7 +64,7 @@ FIELDS = (
 def default_cpu() -> int:
     """Return CPU 2 when the process may use it, else its lowest allowed CPU.
 
-    CPU 2 is a P-core on the i5-13500H, which mixes P- and E-cores (E.3); on the Pi 5 all
+    CPU 2 is a P-core on the i5-13500H, which mixes P- and E-cores; on a Raspberry Pi all
     four cores are alike.
 
     Returns:

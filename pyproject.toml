@@ -11,7 +11,7 @@ dependencies = [
 [project.optional-dependencies]
 # Only needed to save rendered images in explorations/gaussian_splatting/render.py.
 render = ["pillow>=10.0"]
-# Phase E benchmarks (python -m benchmarks, make bench): the libraries edge pipelines call.
+# Benchmarks (python -m benchmarks, make bench): the libraries edge pipelines call.
 # Optional, so CI (uv sync --all-groups) stays light; tests that need them skip.
 bench = [
     "torch>=2.4",
@@ -19,7 +19,7 @@ bench = [
     "opencv-python-headless>=4.10",
     "matplotlib>=3.8",
 ]
-# The E2 detector load. Ultralytics and its weights are AGPL-3.0 (plan.md E.6).
+# The detector load. Ultralytics and its weights are AGPL-3.0; used only as a benchmark load.
 bench-load = ["ultralytics>=8.3"]
 
 [dependency-groups]
@@ -61,7 +61,7 @@ extend-exclude = [
 # host.py is one: it runs as `python -m models.nms.host` and reports to the terminal.
 "**/__main__.py" = ["T201"]
 "models/nms/host.py" = ["T201"]
-# The E0 scripts are CLI entry points too, reporting to the terminal.
+# The feasibility scripts are CLI entry points too, reporting to the terminal.
 "benchmarks/feasibility/*.py" = ["T201"]
 "benchmarks/report.py" = ["T201"]
 "benchmarks/onchip_latency.py" = ["T201"]

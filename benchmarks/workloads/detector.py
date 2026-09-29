@@ -1,6 +1,6 @@
 """The detector workload: YOLO inference, as a real edge pipeline runs it.
 
-Two ways to use it (plan.md Phase E, "Pi 5 under load"):
+Two ways to use it (docs/results/benchmarks.md §3, load conditions):
 
 * ``pipeline``, the main condition -- :class:`Detector` in the benchmark's own process.
   Each timed NMS call follows one inference, as it does per frame in a real pipeline, so
@@ -9,7 +9,7 @@ Two ways to use it (plan.md Phase E, "Pi 5 under load"):
   continuously on the cores the benchmark is not pinned to. That measures contention for
   the shared cache and memory.
 
-Needs the ``bench-load`` extra (``ultralytics``, AGPL-3.0; plan.md E.6). Images default to
+Needs the ``bench-load`` extra (``ultralytics``, AGPL-3.0; see docs/results/benchmarks.md §9). Images default to
 the two that ship with Ultralytics; pass ``--images`` for a directory of JPEGs.
 
 Usage, as the concurrent worker::

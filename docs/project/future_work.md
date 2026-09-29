@@ -19,7 +19,7 @@ on a Zynq or Kria), where it would replace a DDR → interrupt → software-NMS 
 
 **Known.** In AMD's own Vitis AI example (YOLOv3 on a ZCU102), CPU post-processing takes about
 32 ms against 8 ms of DPU time, but that figure includes decode and dequantise, not NMS alone
-([plan.md](plan.md) E.2 and the E0 build-log entry; agent-sourced, verify before citing). The core's
+(gathered by a research agent during the feasibility study, see its [build-log](build_log.md) entry; verify before citing). The core's
 interface (`we`/`waddr`/`wdata`, `start`, `done`, `keep_mask`) is already a simple register
 interface, so an AXI-Stream or AXI-Lite wrapper is thin.
 
@@ -40,8 +40,7 @@ all-pairs fill costs N²/P cycles, so at N = 1,000 and P = 16 it would take ~62,
 faster than software. Published large-N designs stream or fold their sorters instead (DATE 2022:
 1,000 boxes in 12.79 µs at 400 MHz).
 
-**Start.** A folded sorter reusing one 16-CAS layer over 15 cycles (sketched in [plan.md](plan.md)
-Part 3), then a streaming resolve. **Effort:** weeks; an architecture change, not a parameter.
+**Start.** A folded sorter reusing one 16-CAS layer over 15 cycles, then a streaming resolve. **Effort:** weeks; an architecture change, not a parameter.
 
 ## 3. More than one class
 
@@ -54,7 +53,7 @@ score would allow 16 classes in 16 × 0.80 µs = 12.8 µs ([architecture.md](../
 **Start.** Decide the record format first; then a per-class `present_mask` from the host is the
 smallest change. **Effort:** days.
 
-## 4. A literature comparison (plan stage E5)
+## 4. A literature comparison
 
 **Why.** The only external hardware point cited is one DATE 2022 figure. An examiner will ask how
 this block compares with published FPGA NMS designs.
@@ -68,7 +67,7 @@ Stratix 10); a YOLOv2 NMS on Alveo U50 (APPT 2023); Zhang et al., ISVLSI 2020; M
 batch and cycles per box pair where the paper allows, "as reported by the authors" otherwise.
 **Effort:** ½ day.
 
-## 5. The same RTL on faster parts (plan stage E7)
+## 5. The same RTL on faster parts
 
 **Why.** Answers "is 100 MHz just the Basys 3?". The cycle count carries over to any part; the
 nanoseconds do not.
@@ -82,7 +81,7 @@ UltraScale+) is not installed. A two-pass sweep tool was written and then remove
 context on each part at P = 16 and 32. Report every figure as post-route static timing, not run
 on silicon. **Effort:** ~1 hour unattended.
 
-## 6. The lane-count curve (plan stage D2)
+## 6. The lane-count curve
 
 **Why.** P (the number of IoU lanes) is a generic, `P ∈ {1, 2, 4, 8, 16, 32}`, but only P = 16 was
 implemented and measured. Until the curve exists, P should be presented as fixed at 16, not as a
@@ -103,7 +102,7 @@ tuned design axis.
   than the Pi 4's A72.
 - **The laptop under load.** Only idle laptop runs are committed; the load conditions ran on the
   Pi 4 alone.
-- **MicroBlaze in the same fabric (plan stage E6).** The same C on a soft CPU in the XC7A35T at
+- **MicroBlaze in the same fabric.** The same C on a soft CPU in the XC7A35T at
   100 MHz: the strictest same-silicon comparison, reported per LUT as well as per batch (a
   MicroBlaze is ~1–2k LUT against the block's 12,570). Vitis is installed. **Effort:** 2–3 days.
 
@@ -112,14 +111,14 @@ tuned design axis.
 - **Recover the `T_INT × U` constant fold.** Vivado maps it to a second DSP, so each lane costs 2
   DSPs, not 1 ([architecture.md](../design/architecture.md) §5). With `T_INT = 128` it is a shift;
   folding it would save 16 DSPs and change nothing else.
-- **Masked-argmax keeper (plan stage C5).** An alternative to the sorter, designed in
-  [plan.md](plan.md) Part 3 so that it is a yes/no decision, not a redesign. **Effort:** ~1 day.
+- **Masked-argmax keeper.** An alternative to the sorter: an `N − 1`-node reduction over the
+  keys, ANDed with `valid_mask`, whose winner's low 5 bits are the keeper index directly. **Effort:** ~1 day.
 - **Widen the timing margin.** The board design closes 100 MHz with +0.200 ns; the documented
   remedies are in [hardware.md](../results/hardware.md) §5.
 
 ## 9. Demonstration and housekeeping
 
-- **A detector front-end demo (plan stage D4).** A host script that runs a detector, streams its
+- **A detector front-end demo.** A host script that runs a detector, streams its
   boxes to the board and draws the survivors from the returned `keep_mask`. The FPGA side does
   not change. **Effort:** 1–2 days.
 - **The UART round trip at the FTDI default 16 ms timer.** A five-minute measurement with the board
@@ -130,7 +129,7 @@ tuned design axis.
 
 ## 10. 3D Gaussian Splatting depth sorting
 
-The project's Phase 0 measured 3DGS's per-tile depth sort as a candidate workload: a real
+Early in the project, the team measured 3DGS's per-tile depth sort as a candidate workload: a real
 bottleneck (504–662 ms on a CPU against a 33 ms frame budget) that needs a full sort, which the
 bitonic network provides. The team chose NMS; the sorter half of this design transfers unchanged.
 The measurements and code are in

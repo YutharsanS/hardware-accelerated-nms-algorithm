@@ -12,7 +12,7 @@
 -- to get wrong, so the usual sim/synth mismatch is unrepresentable rather than merely
 -- avoided, and it synthesises identically to a process(all).
 --
--- Cost model, which B2.2 measures against: a W-bit carry-chain compare (~8 LUT6) plus two
+-- Cost model, which synthesis measures against: a W-bit carry-chain compare (~8 LUT6) plus two
 -- W-bit 2:1 swap muxes whose select is shared, so two mux bits pack into one LUT6 --
 --   LUT = 8 + 2*ceil(W/2)
 -- At W = KEY_W = 21 that is 30 LUT, and 240 of them is 7,200 LUT = 34.6% of an XC7A35T.
@@ -34,7 +34,7 @@ entity cas is
         -- sub-stage's comparator, and numeric_std reports every such compare as
         -- "metavalue detected" -- 1,680 warning lines at time 0 for one bitonic32 run,
         -- which is noise that would hide a real one. Fixed here rather than by silencing
-        -- the simulator, so it stays fixed under xsim at B6.1 too. Synthesis ignores an
+        -- the simulator, so it stays fixed under xsim too. Synthesis ignores an
         -- initial value on a combinational output.
         y0       : out unsigned(W - 1 downto 0) := (others => '0');
         y1       : out unsigned(W - 1 downto 0) := (others => '0')

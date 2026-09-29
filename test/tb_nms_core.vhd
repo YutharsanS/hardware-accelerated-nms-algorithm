@@ -21,8 +21,8 @@
 --
 -- Together these make the block's full latency an equality too, from the first record in
 -- to done:  T_FULL = N (load) + SETTLE + T = 32 + 1 + 80 = 113 cycles at the shipped
--- generics. That is the figure a software NMS call is compared with (docs/project/plan.md, Phase E
--- rules), not T alone.
+-- generics. That is the figure a software NMS call is compared with
+-- (docs/results/benchmarks.md §2), not T alone.
 --   * keep_mask = expected, status = OK, and back in IDLE one edge later
 --
 -- Nothing here is stubbed. Where tb_nms_ctrl replays the lanes from traces, this drives

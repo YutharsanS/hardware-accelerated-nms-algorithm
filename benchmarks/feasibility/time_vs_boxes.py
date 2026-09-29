@@ -7,7 +7,7 @@ repeated batch cannot flatter the branch predictor or the cache.
 
 Inputs are prepared outside the timed call in each library's native format. Every call is
 timed on its own and the samples are summarised as min / median / p99 / max, never a mean
-(plan.md Phase E, E.3). Run it pinned to one core, e.g. ``taskset -c 2``.
+(docs/results/benchmarks.md §3). Run it pinned to one core, e.g. ``taskset -c 2``.
 
 Usage::
 
@@ -108,7 +108,7 @@ def agreement(prepared: dict[str, list]) -> int:
     """Count images where torchvision and OpenCV keep different boxes.
 
     Both suppress on IoU > threshold. They may still differ on tie order between equal
-    scores, which the report states rather than hides (E.3).
+    scores, which the report states rather than hides.
 
     Args:
         prepared: Output of :func:`prepare`.

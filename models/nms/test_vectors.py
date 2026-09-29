@@ -1,4 +1,4 @@
-"""B1.3 gate: vector files round-trip, and every case tests what it claims to."""
+"""Vector files round-trip, and every case tests what it claims to."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _intersecting_pairs(boxes: list[model.Box]) -> int:
     )
 
 
-# --- round trip, the B1.3 gate -----------------------------------------------------
+# --- round trip ---------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", sorted(vectors.all_cases()))

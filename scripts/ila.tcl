@@ -1,4 +1,4 @@
-# Capture T on silicon with the ILA that `make impl ILA=1` inserts (docs/project/plan.md Phase E, E3).
+# Capture T on silicon with the ILA that `make impl ILA=1` inserts (docs/user_guide.md §8).
 #
 #   vivado -mode batch -source scripts/ila.tcl -tclargs <outdir> <windows> <port>
 #

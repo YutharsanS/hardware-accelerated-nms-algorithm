@@ -5,15 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository structure
 
-- `src/components/` — individual, modular datapath blocks (e.g., compare-and-swap units, FSMs)
-- `src/pipeline/` — top-level integration wiring components into the final sorting network
-- `test/` — automated self-checking VHDL testbenches (unit and pipeline-level); does not exist yet, create it when adding the first testbench
-- `models/data/` — datasets and generated test vectors (I/O payloads) consumed by testbenches
-- `scripts/` — Makefiles and utility scripts (GHDL automation, Python formatters like Ruff/Black)
-- `benchmarks/` — Phase E evaluation scripts against competitor NMS implementations; results under `benchmarks/results/`
-- `deployment/` — hardware constraints (e.g., `.xdc` files) and synthesis scripts for physical FPGA deployment
-- `docs/user_guide.md` — the canonical GHDL/GTKWave workflow reference (see below)
-
+- `src/components/` — individual datapath and link blocks (`cas`, `bitonic32`, `iou_lane`, `box_store`, `nms_ctrl`, UART, frame layer)
+- `src/pipeline/` — integration: `nms_core` (the compute core) and `nms_top` (the Basys 3 top)
+- `test/` — self-checking VHDL testbenches (`tb_*.vhd`); `test/stubs/` holds simulation-only stand-ins (the ILA IP)
+- `models/nms/` — the Python golden model, frozen constants, vector generator, wire format and host program
+- `models/data/` — committed test vectors consumed by the testbenches
+- `benchmarks/` — the software benchmark harness and the on-chip latency checker; results under `benchmarks/results/`
+- `scripts/` — the Makefile rules and Vivado Tcl (synthesis, implementation, programming, ILA)
+- `deployment/` — Basys 3 constraints (`basys3.xdc`)
+- `docs/` — `user_guide.md` (the workflow reference), `design/` (spec, FSM, primer), `results/` (hardware, benchmarks), `project/` (build log, future work)
+- `explorations/` — side studies outside the NMS product (the early 3DGS measurements)
+- `tests/` — repository checks (every Markdown link must resolve)
 
 ## Claude skills
 
@@ -35,7 +37,7 @@ If the student is struck on project specific configurations guide them using the
 - **Name**: Hardware Acclerated NMS Algorithm with Bitonic Sort
 - **Tech Stack**: VHDL, GHDL, Vivado, Basys3
 - **Team Size**: 2 developers
-- **Deadline**: 28 August 2026 (Behavioral simulation of major components)
+- **Status**: complete (2026-09-29): verified on silicon and benchmarked; see `docs/project/future_work.md` for what was not done
 
 ## Additional Docs
 If the student needs more details, prompts them to read these documents
@@ -50,7 +52,7 @@ If the student needs more details, prompts them to read these documents
 - Use `uv` for Python tooling
 
 ### Naming Conventions
-- **Files**: snake_case (state_machine.vhdl)
+- **Files**: snake_case (state_machine.vhd)
 - **Classes**: PascalCase (NMS)
 - **Functions/Variables**: snake_case (calculate_iou)
 - **Constants**: UPPER_SNAKE_CASE (API_BASE_URL)

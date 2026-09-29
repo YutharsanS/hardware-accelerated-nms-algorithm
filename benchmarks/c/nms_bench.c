@@ -1,5 +1,5 @@
 /*
- * NMS in portable C, timed inside C (plan.md Phase E, E.4).
+ * NMS in portable C, timed inside C (see docs/results/benchmarks.md §3).
  *
  * A Python -> C call costs about 1 us, which would swamp a ~0.2 us answer, so each call
  * reads the clock itself and hands its own duration back. Built as a shared library and

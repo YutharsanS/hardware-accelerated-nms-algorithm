@@ -6,7 +6,7 @@ study's files live in ``results/feasibility/`` and are not merged) and prints Ma
 * one table per machine and load, with a row per implementation and a column per input
   group, each cell ``median / p99`` in microseconds;
 * the end-to-end UART figures in a table of their own, beside the core's latency, never
-  in the same column as a compute time (plan.md Phase E, E.4).
+  in the same column as a compute time.
 
 A run whose metadata says ``valid: false`` (a Pi that throttled) is listed but not
 tabulated. ``--hist DIR`` also draws one histogram per machine and load from the raw

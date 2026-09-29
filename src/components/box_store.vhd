@@ -21,7 +21,7 @@
 --              lane muxes N/P payloads rather than needing an N:1 crossbar
 --
 -- The row-source mux is the path docs/design/fsm_design.md section 9 flags: it sits between
--- nms_ctrl's index_table and lane stage 1, and is measured in context at C4.
+-- nms_ctrl's index_table and lane stage 1, and is measured in context in the integrated core.
 --
 -- `rst` clears the area pipeline's valid bit only. Payloads have no validity -- present_mask
 -- says which slots mean anything -- so resetting 2,816 flip-flops would buy nothing. A reset

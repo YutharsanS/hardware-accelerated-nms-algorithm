@@ -28,10 +28,9 @@ documents below are grouped by what you want from them.
 
 | document | read it to |
 |---|---|
-| [project/plan.md](project/plan.md) | the design rationale, the build sequence and every decision with its evidence |
 | [project/build_log.md](project/build_log.md) | one entry per step, in order: what was built and measured, and what failed on the way |
 | [project/future_work.md](project/future_work.md) | what was not done, why it matters, and how to start |
 
-Images used by these documents are in [images/](images/). The Phase 0 study that preceded the
+Images used by these documents are in [images/](images/). The study that preceded the
 NMS work — 3D Gaussian Splatting's depth sort — is in
 [explorations/gaussian_splatting/](../explorations/gaussian_splatting/README.md).

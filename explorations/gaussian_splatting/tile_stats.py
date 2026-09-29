@@ -1,6 +1,6 @@
 """Measure the per-tile depth-sorting workload of a 3DGS frame.
 
-This is the artifact Phase 0 exists to produce. The literature reports Gaussians-per-tile
+This is the artifact this study exists to produce. The literature reports Gaussians-per-tile
 varying by two orders of magnitude, which is precisely what breaks a *fixed-parallelism*
 sorter -- and a bitonic network is exactly that. So the numbers that matter are:
 

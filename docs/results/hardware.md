@@ -100,7 +100,7 @@ DSP Report: Generating DSP s2_inter_reg, operation Mode is: (A2*B2)'.
 ```
 
 Nothing structural is wrong — area and timing both pass comfortably — but recovering the fold
-would halve the DSP budget. See [build_log.md](../project/build_log.md) B4.2.
+would halve the DSP budget. See the [build log](../project/build_log.md), the `iou_lane` synthesis entry.
 
 ---
 
@@ -149,7 +149,7 @@ Every module that exists clears 100 MHz, with one configuration condition:
 - **The integration risk this exposes**: in the full design, the lane inputs are fed from
   `index_table` through a 32:1 × 72 b row-source mux whose selects fan out to 16 lanes. That
   mux has to fit in the lane's **2.84 ns of remaining slack**, which is tight.
-- **If it misses at C4**, the fix is a registered keeper/candidate stage in the datapath. That
+- **If it misses at integration**, the fix is a registered keeper/candidate stage in the datapath. That
   is one more lane stage (`LANE_LATENCY` 5), which `nms_ctrl` absorbs through its generic,
   costing 1 cycle (T 78 → 79). See [fsm_design.md](../design/fsm_design.md) §9.
 
@@ -166,7 +166,8 @@ from measured segments, each timed with its ports constrained:
 | `iou_lane`: stage 1, ports → DSP | 7.161 ns |
 | **wired directly** | **≈ 16.8 ns against 10 ns** |
 
-That sum predicted that C4 would need register stages. **C4 measured it on the placed core**, with
+That sum predicted that integration would need register stages. **The integrated core measured it
+on the placed design**, with
 `ISSUE_REGS` as a generic of `nms_core`:
 
 | `ISSUE_REGS` | T | WNS | Fmax | lane stage 1 slack | sorter slack | LUT | FF |
@@ -186,8 +187,8 @@ Four findings:
 3. **The critical path moved to the sorter.** In context, `bitonic32`'s sub-stage 10 → 12
    segment takes 9.8 ns, against 8.57 ns alone. That is routing pressure at 59.5% LUT.
 4. **Both margins are thin.** The sorter has +0.202 ns and the payload register → lane stage 1
-   path has about +0.1 ns (that path now drives 16 lanes' worth of fan-out). Adding the UART at
-   D1 will add routing pressure. Known remedies, in order of cost:
+   path has about +0.1 ns (that path now drives 16 lanes' worth of fan-out). Adding the UART for
+   the board design will add routing pressure. Known remedies, in order of cost:
    - re-placing the sorter cuts through `CUT_AFTER`, or `PIPE_CUTS = 9`, which is +1 cycle;
    - duplicating the payload register to split the 16-lane fan-out;
    - a third issue stage, which is +1 cycle.
@@ -208,7 +209,7 @@ not out of context — and writes a bitstream only if setup and hold both pass:
 | critical path | `bitonic32`, sub-stage 12 → 14 |
 | bitstream | written, `build/impl/nms_top.bit` |
 
-The risk carried out of C4 did not materialise. The UART, frame parser and reply logic cost
+The risk carried out of the core integration did not materialise. The UART, frame parser and reply logic cost
 about 190 LUT and moved the slack from +0.202 to +0.200 ns. The margin is still thin, and the
 remedies above still apply if a later change eats it. `check_timing` lists 2 inputs and 17
 outputs without delays; those are RsRx, btnC, RsTx and the LEDs, declared false paths in the
@@ -217,7 +218,7 @@ XDC by design.
 The `PIPE_CUTS` sweep in §2 predates the method correction. Its internal-segment figures stand,
 but the table has not been re-run with ports constrained.
 
-**P1 — the weakest load-bearing estimate in the plan — is settled, and it was pessimistic.**
+**The weakest load-bearing estimate — the sorter's combinational timing — is settled, and it was pessimistic.**
 It projected 22–37 ns / 27–45 MHz for the network combinationally; `PIPE_CUTS = 2` measures
 18.570 ns / 53.9 MHz. Per sub-stage that is ~3.7 ns against the 1.5–2.5 ns assumed, but across
 fewer levels in the critical segment than the estimate's arithmetic implied.
@@ -232,16 +233,16 @@ The constant moved from 2 to 8 in architecture.md §9, `params.py` and `nms_pkg.
 `test_params_agree` still holds. At 2 the sorter ran 53.9 MHz and did **not** meet the clock the
 rest of the design assumes. The 6 extra cycles of sorter latency take architecture.md §9's
 `T = N²/P + L + C + 2` from 72 to **78 cycles (0.78 µs)** at `P = 16`. The FSM design absorbs
-them ([fsm_design.md](../design/fsm_design.md) §6). Correctness at 8 is verified: B3.1 checked every
+them ([fsm_design.md](../design/fsm_design.md) §6). Correctness at 8 is verified: the sorter testbench checked every
 `PIPE_CUTS` from 0 to 15, and `tb_bitonic32` now runs at 8 in the standing regression.
 
 ---
 
 ## 6. On the board
 
-The D1 bitstream (`build/impl/nms_top.bit`: P = 16, `PIPE_CUTS` = 8, I = 2) was run on a Basys 3
+The board-design bitstream (`build/impl/nms_top.bit`: P = 16, `PIPE_CUTS` = 8, I = 2) was run on a Basys 3
 on 2026-09-28 and checked from the host over the FT2232HQ UART with `make host`
-([build_log.md](../project/build_log.md) D3). No RTL or host change was needed.
+([build log](../project/build_log.md), the first board run). No RTL or host change was needed.
 
 | check | result |
 |---|---|

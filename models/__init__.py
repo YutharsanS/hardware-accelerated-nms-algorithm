@@ -4,6 +4,6 @@
   generator its VHDL testbenches read, the wire format and the host program. This is the
   reference the RTL is checked against, bit for bit.
 
-The Phase 0 3D Gaussian Splatting study that preceded it now lives in
+The earlier 3D Gaussian Splatting study that preceded it now lives in
 :mod:`explorations.gaussian_splatting`.
 """

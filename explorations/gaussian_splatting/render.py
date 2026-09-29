@@ -1,6 +1,6 @@
 """Alpha-blend the sorted per-tile lists into an image.
 
-This exists to *validate* the projection. The unit checks in Phase 0 confirm depths,
+This exists to *validate* the projection. The unit checks in this study confirm depths,
 radii, screen centres and key ordering against hand-computed values, but they cannot
 catch an error that is self-consistent yet wrong -- a transposed covariance, a flipped
 axis, a bad quaternion convention. Rendering the scene and looking at it can.

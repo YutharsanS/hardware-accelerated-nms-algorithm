@@ -1,6 +1,6 @@
 -- nms_core -- the complete NMS compute core: store, sorter, control, and P IoU lanes.
 --
--- Everything except the wire. D1 wraps this with frame_rx / frame_tx (UART, magic, CRC-8,
+-- Everything except the wire. nms_top wraps this with frame_rx / frame_tx (UART, magic, CRC-8,
 -- seq) to make the board-level top. The interface here is the one frame_rx drives: a record
 -- write port, `start`, and the result.
 --
