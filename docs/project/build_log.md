@@ -67,7 +67,7 @@ the ignore applies. `make lint` now covers `models/` as a whole, notebook includ
 ### B0.1 — Makefile and GHDL flow                                        2026-09-04
 
 **Built:** `scripts/Makefile` with the real rules (per the layout in
-[README.md](README.md)) plus a one-line root `Makefile` that includes it, so `make` works
+[README.md](../README.md)) plus a one-line root `Makefile` that includes it, so `make` works
 from the repository root. Targets: `test` (the standing regression), `tb_<name>` per
 testbench, `tb_hello` (toolchain smoke test), `lint`, `analyse`, `synth MOD=<mod>`,
 `clean`. Created `test/`. Added `build/` and the Vivado/xsim artefacts (`xvlog.pb`,
@@ -113,7 +113,7 @@ wholesale because the gcc/llvm backends do emit `.o` files and binaries.
 
 ### B1.0 — architecture.md corrected and frozen                         2026-09-04
 
-**Built:** [architecture.md](architecture.md) rewritten as the normative interface spec —
+**Built:** [architecture.md](../design/architecture.md) rewritten as the normative interface spec —
 record format, wire protocol, datapath widths, predicate, sort key, degenerate-box rules,
 storage, architecture, conventions and scope limits. `params.py` and `nms_pkg.vhd` mirror
 it, and a later test fails the build if the three diverge.
@@ -153,7 +153,7 @@ area budget LUT 12,318 (59.2%)  FF 7,244 (17.4%)  DSP 17 (18.9%)
    this spec and the golden model disagreed on coordinate width. Both have always said 12;
    the wording is now explicit and the trap is documented in place.
 
-**Also fixed:** [NMS.md](NMS.md) said the test set has **31** boxes. It has **32** —
+**Also fixed:** [nms_primer.md](../design/nms_primer.md) said the test set has **31** boxes. It has **32** —
 verified by executing the notebook. That error had made a padding decision look necessary
 when it is not. The anchor `keep_mask = 0xE1010101` and the caveat that the set contains no
 ties and no boundary pairs are now recorded there too.
@@ -369,7 +369,7 @@ resolve loop is inherently serial since each keeper depends on all previous ones
 
 ### B1.5 — notebook rewired onto the shared module                      2026-09-04
 
-**Built:** [golden-model.ipynb](../models/golden-model.ipynb) rewritten — 13 cells, 8
+**Built:** [golden-model.ipynb](../../models/golden-model.ipynb) rewritten — 13 cells, 8
 markdown and 5 code. It keeps the narrative (what a box is, how IoU works, the width
 table, what the test set does) and **imports the algorithm** instead of defining it.
 
@@ -425,10 +425,10 @@ silently rewriting the file at commit time.
 
 ### B2.1 — first RTL: nms_pkg and cas                                   2026-09-04
 
-**Built:** [nms_pkg.vhd](../src/components/nms_pkg.vhd) (38 constants + 11 types),
-[cas.vhd](../src/components/cas.vhd), [tb_cas.vhd](../test/tb_cas.vhd),
-[tb_params.vhd](../test/tb_params.vhd) and
-[test_params_agree.py](../models/nms/test_params_agree.py).
+**Built:** [nms_pkg.vhd](../../src/components/nms_pkg.vhd) (38 constants + 11 types),
+[cas.vhd](../../src/components/cas.vhd), [tb_cas.vhd](../../test/tb_cas.vhd),
+[tb_params.vhd](../../test/tb_params.vhd) and
+[test_params_agree.py](../../models/nms/test_params_agree.py).
 
 **Gate:** `make tb_cas` — exhaustive over all 256 input pairs at W=4 in both directions
 plus directed 21-bit cases, ending `report "PASS"` with zero assertion failures.
@@ -445,7 +445,7 @@ PASS
 
 `cas` is nine lines of architecture: one comparator whose result is shared by two muxes,
 written as three concurrent assignments with no process at all, per the house style in
-[architecture.md](architecture.md) section 10. Cost model to measure at B2.2:
+[architecture.md](../design/architecture.md) section 10. Cost model to measure at B2.2:
 `8 + 2*ceil(W/2)` = **30 LUT at W=21**, and 240 of them = 7,200 LUT (34.6%).
 
 #### The testbench was mutation-tested, because a passing test that cannot fail is worthless
@@ -527,10 +527,10 @@ testbenches + the toolchain smoke test, in ~35 s.
 
 ### B3.1 — the bitonic sorting network                                  2026-09-04
 
-**Built:** [bitonic32.vhd](../src/components/bitonic32.vhd) — 240 CAS on 21-bit keys in 15
-generated sub-stages — and [tb_bitonic32.vhd](../test/tb_bitonic32.vhd). Plus
+**Built:** [bitonic32.vhd](../../src/components/bitonic32.vhd) — 240 CAS on 21-bit keys in 15
+generated sub-stages — and [tb_bitonic32.vhd](../../test/tb_bitonic32.vhd). Plus
 `cases.txt`, a manifest of the vector set, and the `SWEEP_` mechanism in
-[scripts/Makefile](../scripts/Makefile) that runs one testbench in several configurations.
+[scripts/Makefile](../../scripts/Makefile) that runs one testbench in several configurations.
 
 **Gate:** the full permutation matches the Python order on **every** vector set including
 the tie cases, and the recovered indices match too, for `PIPE_CUTS` in {0, 2}.
@@ -643,8 +643,8 @@ runs across 3 testbenches + the smoke test.
 
 ### B4.1 — the IoU lane                                                 2026-09-04
 
-**Built:** [iou_lane.vhd](../src/components/iou_lane.vhd) — four registered stages, one
-DSP — and [tb_iou_lane.vhd](../test/tb_iou_lane.vhd). Plus `random_pairs.pairs`
+**Built:** [iou_lane.vhd](../../src/components/iou_lane.vhd) — four registered stages, one
+DSP — and [tb_iou_lane.vhd](../../test/tb_iou_lane.vhd). Plus `random_pairs.pairs`
 (10,000 hostile pairs), a second copy at `T_INT = 255`, the `pairs.txt` manifests, and
 `model.suppresses_at`.
 
@@ -953,7 +953,7 @@ stage, which `nms_ctrl` absorbs through `LANE_LATENCY` (T 78 → 79) with no log
 
 ### C3 — `nms_ctrl`, the all-pairs control FSM                          2026-09-24
 
-Built to [fsm_design.md](fsm_design.md), which was reviewed first. The review added the explicit
+Built to [fsm_design.md](../design/fsm_design.md), which was reviewed first. The review added the explicit
 start/busy rule for `frame_rx` and illegal-state recovery. `src/components/nms_ctrl.vhd`, one
 clocked process, VHDL-93:
 
@@ -1065,7 +1065,7 @@ DSP writing through the 32-way area decode.
 **The row mux answers the open C4 question.** Timed alone, `row_src` → `row_rec` is 3.951 ns.
 Added to `nms_ctrl`'s 5.714 ns and the lane's 7.161 ns stage 1, the path wired directly is
 ≈ 16.8 ns. C4 therefore needs two register stages (selects, then payloads), giving
-`LANE_LATENCY = 6` and T = 80, with no change to `nms_ctrl` ([results.md](results.md) §5).
+`LANE_LATENCY = 6` and T = 80, with no change to `nms_ctrl` ([hardware.md](../results/hardware.md) §5).
 
 ---
 
@@ -1372,7 +1372,7 @@ timer for the comparison. Then D2's P-sweep.
 **Status: decided; the Pi 5 run at N ≤ 32 is still open.** Scripts are in
 `benchmarks/feasibility/`. They were run from a scratch venv (torch 2.14 CPU, torchvision 0.29,
 OpenCV 5.0, ultralytics 8.4.164), as planned. Outputs are in `benchmarks/results/feasibility/` and the
-plot is [images/nms_time_vs_boxes.png](images/nms_time_vs_boxes.png).
+plot is [images/nms_time_vs_boxes.png](../images/nms_time_vs_boxes.png).
 
 #### How many boxes reach NMS
 
@@ -1380,7 +1380,7 @@ YOLOv8n and YOLO11n were run at a fixed 640 × 640 letterbox (8,400 anchors) on 
 val2017 images. The images are the first 500 entries of `val2017.zip`, whose order is not by
 image id. Each anchor keeps its best class, as `predict` does. A batch is one (image, class)
 pair, because multi-class NMS runs one batch per class
-([architecture.md](architecture.md) §11).
+([architecture.md](../design/architecture.md) §11).
 
 The extraction was checked against Ultralytics' own `non_max_suppression` on the same tensor,
 and the survivor counts match. `predict`'s default rectangular letterbox gives slightly
@@ -1643,7 +1643,7 @@ host, and every one measured **`start` → `done` = 80 cycles = 800 ns**, with `
 exactly 80. The host checked all 16 replies against the golden model. `done` sits exactly T
 samples after `start`, the same equality `tb_nms_core` pins, so simulation and silicon agree
 to the cycle. The capture is committed as `benchmarks/results/onchip-ila-2026-09-29.{csv,vcd}`,
-and the waveform is [images/onchip_latency.png](images/onchip_latency.png).
+and the waveform is [images/onchip_latency.png](../images/onchip_latency.png).
 
 Two fixes to `scripts/ila.tcl` were needed on the first real run. Neither could be tested
 without the board:
@@ -1671,7 +1671,7 @@ without the board:
 twice, then pipeline, concurrent and stress, plus the feasibility timing at N ≤ 32. All runs
 are valid: no throttling before or after any run, 53–74 °C, and every answer agreed with its
 reference. The results are in results.md §8, with the load figure
-[images/pi4_nms_by_load.png](images/pi4_nms_by_load.png).
+[images/pi4_nms_by_load.png](../images/pi4_nms_by_load.png).
 
 **The headline:** the block's fixed 1.13 µs beats every software implementation on every
 input except one. C wins on `all_equal` (1.02 µs), where 32 identical boxes let sequential

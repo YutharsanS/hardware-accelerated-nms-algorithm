@@ -1,4 +1,4 @@
-"""Merge the benchmark results into the tables for results.md: ``make bench-report``.
+"""Merge the benchmark results into Markdown tables: ``make bench-report``.
 
 Reads every ``<target>-<host>-<date>-<load>.csv`` in ``benchmarks/results/`` (the feasibility
 study's files live in ``results/feasibility/`` and are not merged) and prints Markdown:

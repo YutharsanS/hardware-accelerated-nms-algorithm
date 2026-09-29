@@ -269,7 +269,7 @@ def test_trace_shows_rows_applied_to_earlier_ranks_are_no_ops() -> None:
 
 
 def test_union_is_bounded_by_the_image_not_by_twice_a_box() -> None:
-    # docs/architecture.md gives max U as 2*COORD_MAX**2 = 33,538,050, needing 25 bits.
+    # docs/design/architecture.md gives max U as 2*COORD_MAX**2 = 33,538,050, needing 25 bits.
     # That is a correct *safe* bound but not a tight one: U = |A| + |B| - |A and B| is the
     # area of the geometric union, and both boxes live inside the same 4096x4096 space, so
     # U can never exceed COORD_MAX**2 = 16,769,025, which fits 24 bits.

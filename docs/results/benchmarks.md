@@ -3,10 +3,10 @@
 How the FPGA NMS block compares with the software NMS that edge vision pipelines actually run:
 what was measured, how, on which machines, and what the numbers do and do not support.
 
-This document collects the Phase E evaluation ([plan.md](plan.md), Phase E) in one place. The
-raw results are committed under [benchmarks/results/](../benchmarks/results/); the per-stage
-narrative, including every bug found on the way, is in [build_log.md](build_log.md); area and
-timing of the RTL itself are in [results.md](results.md) §1–5. Every figure below is taken from
+This document collects the Phase E evaluation ([plan.md](../project/plan.md), Phase E) in one place. The
+raw results are committed under [benchmarks/results/](../../benchmarks/results/); the per-stage
+narrative, including every bug found on the way, is in [build_log.md](../project/build_log.md); area and
+timing of the RTL itself are in [hardware.md](hardware.md) §1–5. Every figure below is taken from
 a committed result file, and each section names the file.
 
 **Status (2026-09-29):** the block's latency is measured in simulation and on silicon; software
@@ -29,7 +29,7 @@ are pinned as equalities in simulation.
 | torchvision `ops.nms` | 17.7 / 27.1 | 195 / 222 | 402 / 533 | 252 / 1,372 | 344 / 1,442 |
 | **the block, 100 MHz** | **1.13 / 1.13** | **1.13 / 1.13** | **1.13 / 1.13** | **1.13 / 1.13** | **1.13 / 1.13** |
 
-![Worst case: the FPGA block against every software NMS tested](images/headline_worst_case.png)
+![Worst case: the FPGA block against every software NMS tested](../images/headline_worst_case.png)
 
 What the evidence supports:
 
@@ -107,11 +107,11 @@ batch, as a real detector's output does.
 Every implementation runs every batch once, untimed, and is compared with a reference:
 - **Our own variants** (C and Python) must equal the golden model `model.nms_sequential`
   **bit for bit**. They did, on every batch, on every machine.
-- **The libraries** suppress when IoU **>** 0.5; the spec says **≥** ([architecture.md](architecture.md)
+- **The libraries** suppress when IoU **>** 0.5; the spec says **≥** ([architecture.md](../design/architecture.md)
   §5). They are checked against the same algorithm with `>`. Any remaining difference must have
   a named cause — tied scores, inverted boxes, or a pair exactly on the threshold — or the run
   fails. The only one seen: OpenCV breaks score ties differently on 173 of the 1,000 hostile
-  batches (§6.3).
+  batches (§6.5).
 
 ### Timing
 
@@ -163,7 +163,7 @@ Pi 4's A72 is slower than the A76, so the Pi 4 comparison favours the block more
 would. It is, however, the class of ARM core that sits beside accelerators in edge SoCs.
 
 The block's area on the XC7A35T: **12,570 LUT (60.4%), 9,979 FF (24.0%), 33 DSP, 0 BRAM**, meeting
-100 MHz with +0.200 ns of setup slack ([results.md](results.md) §5).
+100 MHz with +0.200 ns of setup slack ([hardware.md](hardware.md) §5).
 
 ---
 
@@ -172,7 +172,7 @@ The block's area on the XC7A35T: **12,570 LUT (60.4%), 9,979 FF (24.0%), 33 DSP,
 ### 5.1 Correct on silicon, and what the UART costs
 
 The production bitstream, driven from the laptop over the board's USB-UART
-([results.md](results.md) §6):
+([hardware.md](hardware.md) §6):
 
 | check | result |
 |---|---|
@@ -193,7 +193,7 @@ measured `start` → `done` = 80 cycles = 800 ns, with `busy` high for exactly 8
 count `tb_nms_core` pins in simulation. Sixteen different batches, one count: the data does not
 change the latency.
 
-![ILA capture: start to done in 80 cycles](images/onchip_latency.png)
+![ILA capture: start to done in 80 cycles](../images/onchip_latency.png)
 
 `benchmarks/results/onchip-ila-2026-09-29.csv`; checked by `benchmarks/onchip_latency.py`.
 
@@ -243,7 +243,7 @@ Hostile stream, median / p99 / **max** µs:
 | numpy all-pairs | 425 / 482 / 557 | 676 / 757 / 765 | 585 / 1,164 / 1,620 | 1,346 / 1,699 / 1,835 |
 | **the block** | **1.13 / 1.13 / 1.13** | **1.13** | **1.13** | **1.13** |
 
-![Pi 4: software NMS by load, against the block](images/pi4_nms_by_load.png)
+![Pi 4: software NMS by load, against the block](../images/pi4_nms_by_load.png)
 
 *Each curve is the cumulative distribution of one implementation's calls under one load: at
 time x, the share of calls that had finished. The dotted guides read off the median (50%) and
@@ -269,7 +269,7 @@ of 50 COCO images (`benchmarks/results/feasibility/`).
 | torchvision, Pi 4 | 189 | 192 | 195 |
 | **the block** | **1.13** | **1.13** | **1.13** |
 
-![Software NMS against the block, N ≤ 32](images/nms_time_vs_boxes.png)
+![Software NMS against the block, N ≤ 32](../images/nms_time_vs_boxes.png)
 
 The laptop row of this sweep ran under the `powersave` governor, before the clock was fixed for
 §6.1, so it is ~2× slower than §6.1's figures. The Pi 4 row ran unpinned. Both are context for
@@ -330,7 +330,7 @@ faster; below 1, software is.
 
 The block is fixed at N = 32. To check whether that meets a real need, YOLOv8n and YOLO11n were
 run on 500 COCO val2017 images and the candidates entering NMS counted, per image and per
-(image, class) — multi-class NMS runs one batch per class ([build_log.md](build_log.md), E0).
+(image, class) — multi-class NMS runs one batch per class ([build_log.md](../project/build_log.md), E0).
 
 | confidence > 0.25 | YOLOv8n | YOLO11n |
 |---|---|---|
@@ -359,7 +359,7 @@ application constraint, stated as an assumption**, not something COCO demonstrat
   stress under `performance`. The clock read 1.8 GHz in every run and idle repeated within 4.4%,
   so it held full speed, but the settings differ.
 - **Pipeline samples are few** (100 per implementation); its p99 is the second-highest value.
-- **Single class per batch**, and **N = 32 fixed** ([architecture.md](architecture.md) §11).
+- **Single class per batch**, and **N = 32 fixed** ([architecture.md](../design/architecture.md) §11).
 - **YOLO and Ultralytics are AGPL-3.0**, used only as a benchmark load and not redistributed.
 
 ## 10. Not yet measured
@@ -400,7 +400,7 @@ make program                                         # restore the production bi
 
 Each command writes `<target>-<host>-<date>-<load>.{csv,json}` plus every raw sample, and exits
 non-zero if any answer disagrees with its reference or a Pi throttled. The harness is described
-in [plan.md](plan.md) E.4; its tests are `benchmarks/test_*.py`.
+in [plan.md](../project/plan.md) E.4; its tests are `benchmarks/test_*.py`.
 
 ## 12. Result files
 

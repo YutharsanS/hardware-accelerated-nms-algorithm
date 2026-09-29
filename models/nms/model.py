@@ -170,7 +170,7 @@ def suppresses_at(keeper: Box, candidate: Box, t_int: int) -> bool:
     to be able to evaluate any of its 256 values. It matters for more than completeness:
     with the shipped ``T_INT = 128`` the largest possible RHS is 4,292,870,400, which is
     *under* 2**32 -- so the top bit of the 33-bit RHS is only reachable at ``T_INT > 128``,
-    and without this the width frozen in ``docs/architecture.md`` would go unexercised.
+    and without this the width frozen in ``docs/design/architecture.md`` would go unexercised.
 
     Args:
         keeper: The surviving box.
@@ -209,7 +209,7 @@ def suppresses(keeper: Box, candidate: Box) -> bool:
 
     Raises:
         AssertionError: If the union underflows, which the clamps make impossible. Left in
-            as a live check of the proof in ``docs/architecture.md`` section 7.
+            as a live check of the proof in ``docs/design/architecture.md`` section 7.
     """
     return suppresses_at(keeper, candidate, p.T_INT)
 

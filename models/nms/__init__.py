@@ -2,7 +2,7 @@
 
 The modules here are the reference the RTL is checked against, bit for bit:
 
-* :mod:`models.nms.params` -- the frozen constants, mirroring ``docs/architecture.md``.
+* :mod:`models.nms.params` -- the frozen constants, mirroring ``docs/design/architecture.md``.
 * :mod:`models.nms.model` -- the integer NMS algorithm in both the textbook sequential
   form and the all-pairs form the hardware implements.
 

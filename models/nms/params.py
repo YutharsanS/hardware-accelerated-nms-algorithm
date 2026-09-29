@@ -1,6 +1,6 @@
 """Frozen constants for the NMS accelerator.
 
-Mirrors ``docs/architecture.md``, which is normative. ``src/components/nms_pkg.vhd`` mirrors
+Mirrors ``docs/design/architecture.md``, which is normative. ``src/components/nms_pkg.vhd`` mirrors
 the same numbers on the VHDL side and ``test_params_agree.py`` fails the build if the three
 ever diverge.
 
@@ -88,14 +88,14 @@ each that is the 7,200 LUT (34.6%) in the area budget."""
 
 PIPE_CUTS = 8
 """Register cuts inside the bitonic network; the sort takes exactly this many cycles. 8 is
-the lowest swept value that meets 100 MHz after place and route (119.2 MHz, results.md
+the lowest swept value that meets 100 MHz after place and route (119.2 MHz, docs/results/hardware.md
 section 2); 2 reaches only 53.9 MHz. 0 is combinational; 15 is one cut per sub-stage, the
 upper bound."""
 
 ISSUE_REGS = 2
 """Register stages between nms_ctrl's issue and lane stage 1 inside nms_core: one after the
 row/column selects, one after the payload muxes. Without them that path measures 14.9 ns in
-the placed core (67 MHz); with 2 the core closes 100 MHz (results.md section 5). To nms_ctrl
+the placed core (67 MHz); with 2 the core closes 100 MHz (docs/results/hardware.md section 5). To nms_ctrl
 they are extra lane stages, so they add to the latency like LANE_LATENCY does."""
 
 CLOCK_HZ = 100_000_000
@@ -169,7 +169,7 @@ def crc8(data: bytes) -> int:
 
 
 def validate() -> list[str]:
-    """Check the constants against the derivations in ``docs/architecture.md``.
+    """Check the constants against the derivations in ``docs/design/architecture.md``.
 
     Returns:
         A list of human-readable failures; empty when everything agrees.
@@ -233,7 +233,7 @@ def summary() -> str:
     """Render the frozen constants as a table.
 
     Returns:
-        A multi-line report, matching the tables in ``docs/architecture.md``.
+        A multi-line report, matching the tables in ``docs/design/architecture.md``.
     """
     rows = [
         ("N (boxes per batch)", N),

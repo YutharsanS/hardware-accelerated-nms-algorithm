@@ -14,7 +14,7 @@ Exit status: 0 when every check passed, 1 when any failed or timed out, 2 when t
 not be opened or no mode was given.
 
 The FTDI driver's latency timer defaults to 16 ms and holds a short read -- exactly the
-6-byte reply -- for that long. At startup the host sets it to 1 ms (docs/plan.md P5), or
+6-byte reply -- for that long. At startup the host sets it to 1 ms (docs/project/plan.md P5), or
 prints the ``sudo`` command when it lacks permission. It resets whenever the board is
 re-plugged, which is why the host checks it every run rather than trusting a one-time fix.
 """

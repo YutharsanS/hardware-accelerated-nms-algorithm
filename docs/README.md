@@ -1,29 +1,37 @@
-## Repository Structure
+# Documentation
 
-The project is organized to separate hardware description (VHDL), software algorithmic modeling (Python), and automated verification.
+Start with the [project README](../README.md) for what the block is and what it achieves. The
+documents below are grouped by what you want from them.
 
-```text
-hardware-accelerated-nms-algorithm/
-├── deployment/       # Hardware constraints (e.g., .xdc files) and synthesis scripts for physical FPGA deployment.
-├── docs/             # Technical documentation, architecture diagrams, and project reports.
-│   ├── development_guide.md  # Guidelines for branching, commit standards, and workflow.
-│   └── README.md             # This file.
-├── models/           # Software "golden models" (Python) for algorithmic verification.
-│   └── data/         # Datasets and generated test vectors (I/O payloads) for the testbenches.
-├── scripts/          # Makefiles and utility scripts (e.g., GHDL automation, Python formatters like Ruff/Black).
-├── src/              # Synthesizable RTL source code (VHDL).
-│   ├── components/   # Individual, modular datapath blocks (e.g., compare-and-swap units, FSMs).
-│   └── pipeline/     # Top-level integration wiring the components into the final sorting network.
-├── test/             # Automated self-checking VHDL testbenches for unit and pipeline-level verification.
-└── LICENSE           # Open-source license documentation.
+## Using it
 
-```
+| document | read it to |
+|---|---|
+| [user_guide.md](user_guide.md) | install the toolchain, simulate, synthesise, program the Basys 3, talk to it, capture T on silicon, and run the benchmarks |
 
-## Claude Skills
+## Design
 
-This repository defines shared Claude Code skills under `.claude/skills/` so that agentic developers follow consistent commit and PR practices.
+| document | read it to |
+|---|---|
+| [design/nms_primer.md](design/nms_primer.md) | understand, in plain terms, exactly which NMS the block computes and how the hardware restructures it |
+| [design/architecture.md](design/architecture.md) | **the normative spec**: record format, wire protocol, datapath widths, suppression predicate, sort key, latency. `models/nms/params.py` and `src/components/nms_pkg.vhd` mirror it |
+| [design/fsm_design.md](design/fsm_design.md) | follow the control FSM cycle by cycle, and see how the latency equality is derived |
 
-- **`/commit`** — Reviews the current git status/diff and creates a single commit, following the [Conventional Commits](https://www.conventionalcommits.org/) format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Accepts an optional message argument to use verbatim instead of generating one.
-- **`/pr`** — Prepares a pull request: reviews and stages changes, ensures a conventional commit exists, fetches the task list from a linked GitHub issue number (passed as an argument), and generates a reviewer-friendly PR summary covering what changed, why, testing performed, and potential impacts.
+## Results
 
-Usage: run `/commit` or `/commit <message>` to create a commit, and `/pr <issue-number>` to prepare a pull request linked to that issue.
+| document | read it to |
+|---|---|
+| [results/benchmarks.md](results/benchmarks.md) | **the evaluation**: the block against software NMS on a laptop and a Raspberry Pi 4, idle and under load, with method, figures and limitations |
+| [results/hardware.md](results/hardware.md) | every measured area and timing figure, the board run, and T captured on silicon |
+
+## Project record
+
+| document | read it to |
+|---|---|
+| [project/plan.md](project/plan.md) | the design rationale, the build sequence and every decision with its evidence |
+| [project/build_log.md](project/build_log.md) | one entry per step, in order: what was built and measured, and what failed on the way |
+| [project/future_work.md](project/future_work.md) | what was not done, why it matters, and how to start |
+
+Images used by these documents are in [images/](images/). The Phase 0 study that preceded the
+NMS work — 3D Gaussian Splatting's depth sort — is in
+[explorations/gaussian_splatting/](../explorations/gaussian_splatting/README.md).

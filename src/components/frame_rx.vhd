@@ -1,6 +1,6 @@
 -- frame_rx -- turns received bytes into box_store writes and a start pulse.
 --
--- The host -> FPGA frame (docs/architecture.md section 3), every field MSB first:
+-- The host -> FPGA frame (docs/design/architecture.md section 3), every field MSB first:
 --
 --   bytes 0..1     magic A5 5A
 --   bytes 2..257   32 records, 8 bytes each; record i -> box_store slot i

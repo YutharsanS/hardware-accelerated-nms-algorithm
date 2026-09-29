@@ -1,10 +1,10 @@
-# Measured results
+# Hardware results — area, timing, and the design on silicon
 
-The measured counterpart to the estimates in [architecture.md](architecture.md) §9. Every
+The measured counterpart to the estimates in [architecture.md](../design/architecture.md) §9. Every
 figure here comes from the real part after full place and route — nothing is projected
 unless it says so.
 
-**Method.** `make synth MOD=<module>`, which runs [scripts/synth.tcl](../scripts/synth.tcl):
+**Method.** `make synth MOD=<module>`, which runs [scripts/synth.tcl](../../scripts/synth.tcl):
 out-of-context synthesis through `route_design` on `xc7a35tcpg236-1`, 10 ns constraint
 unless stated, with **zero input and output delay against the clock on every data port**. Area is taken from `report_utilization` and timing from `get_timing_paths`.
 
@@ -17,8 +17,8 @@ Device totals for `xc7a35tcpg236-1`: **20,800 LUT, 41,600 FF, 90 DSP**.
 
 Reports for the last run of each module land in `build/synth/<module>/`.
 
-The comparison with software NMS (laptop, Raspberry Pi 4, idle and under load) is collected in
-[benchmarks.md](benchmarks.md); §6–8 below hold the source figures.
+The comparison with software NMS is in [benchmarks.md](benchmarks.md); §5–6 here are the
+hardware figures it cites.
 
 > **Method correction (2026-09-24).** Before this date `synth.tcl` set only `create_clock`, so
 > input-port → register and register → output-port paths were *unconstrained* and left out of
@@ -100,7 +100,7 @@ DSP Report: Generating DSP s2_inter_reg, operation Mode is: (A2*B2)'.
 ```
 
 Nothing structural is wrong — area and timing both pass comfortably — but recovering the fold
-would halve the DSP budget. See [build_log.md](build_log.md) B4.2.
+would halve the DSP budget. See [build_log.md](../project/build_log.md) B4.2.
 
 ---
 
@@ -151,7 +151,7 @@ Every module that exists clears 100 MHz, with one configuration condition:
   mux has to fit in the lane's **2.84 ns of remaining slack**, which is tight.
 - **If it misses at C4**, the fix is a registered keeper/candidate stage in the datapath. That
   is one more lane stage (`LANE_LATENCY` 5), which `nms_ctrl` absorbs through its generic,
-  costing 1 cycle (T 78 → 79). See [fsm_design.md](fsm_design.md) §9.
+  costing 1 cycle (T 78 → 79). See [fsm_design.md](../design/fsm_design.md) §9.
 
 ### The integrated row-source path will not close in one cycle
 
@@ -180,7 +180,7 @@ Four findings:
 1. **Registers are required.** With none, the path runs 14.9 ns and the core runs at 67 MHz. The
    16.8 ns sum of segments was pessimistic, because the tool optimises across block boundaries
    once the blocks are placed together, but the conclusion stands.
-2. **`ISSUE_REGS = 2` ships** ([architecture.md](architecture.md) §9). **T = 80 cycles =
+2. **`ISSUE_REGS = 2` ships** ([architecture.md](../design/architecture.md) §9). **T = 80 cycles =
    0.80 µs.** `nms_ctrl` absorbed the extra stages through its `LANE_LATENCY` generic with no
    logic change.
 3. **The critical path moved to the sorter.** In context, `bitonic32`'s sub-stage 10 → 12
@@ -232,7 +232,7 @@ The constant moved from 2 to 8 in architecture.md §9, `params.py` and `nms_pkg.
 `test_params_agree` still holds. At 2 the sorter ran 53.9 MHz and did **not** meet the clock the
 rest of the design assumes. The 6 extra cycles of sorter latency take architecture.md §9's
 `T = N²/P + L + C + 2` from 72 to **78 cycles (0.78 µs)** at `P = 16`. The FSM design absorbs
-them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 checked every
+them ([fsm_design.md](../design/fsm_design.md) §6). Correctness at 8 is verified: B3.1 checked every
 `PIPE_CUTS` from 0 to 15, and `tb_bitonic32` now runs at 8 in the standing regression.
 
 ---
@@ -241,7 +241,7 @@ them ([fsm_design.md](fsm_design.md) §6). Correctness at 8 is verified: B3.1 ch
 
 The D1 bitstream (`build/impl/nms_top.bit`: P = 16, `PIPE_CUTS` = 8, I = 2) was run on a Basys 3
 on 2026-09-28 and checked from the host over the FT2232HQ UART with `make host`
-([build_log.md](build_log.md) D3). No RTL or host change was needed.
+([build_log.md](../project/build_log.md) D3). No RTL or host change was needed.
 
 | check | result |
 |---|---|
@@ -258,7 +258,7 @@ on 2026-09-28 and checked from the host over the FT2232HQ UART with `make host`
 The core takes 0.80 µs of this, about 0.02%, which is below the resolution of the measurement.
 The excess over wire time is on the host side: USB full-speed polling, the FTDI latency timer and
 OS scheduling. That is inferred, not separately measured. The figure measures the test harness
-and not the accelerator, as [architecture.md](architecture.md) §11 says it would.
+and not the accelerator, as [architecture.md](../design/architecture.md) §11 says it would.
 
 **T = 80 cycles, measured on silicon.** An ILA on the core's handshake (a debug build, `make
 impl ILA=1`, +0.245 ns slack) captured 16 windows on the Basys 3 on 2026-09-29, one per random
@@ -266,14 +266,14 @@ batch sent by the host. **Every window measured `start` → `done` = 80 cycles =
 `busy` was high for exactly 80. The count was the same for 16 different batches, so the
 latency's independence from the data is shown on the chip, not only in simulation. It is
 exactly the count `tb_nms_core` pins.
-([benchmarks/results/onchip-ila-2026-09-29.csv](../benchmarks/results/onchip-ila-2026-09-29.csv),
-[images/onchip_latency.png](images/onchip_latency.png).)
+([benchmarks/results/onchip-ila-2026-09-29.csv](../../benchmarks/results/onchip-ila-2026-09-29.csv),
+[images/onchip_latency.png](../images/onchip_latency.png).)
 
-![ILA capture: start to done in 80 cycles](images/onchip_latency.png)
+![ILA capture: start to done in 80 cycles](../images/onchip_latency.png)
 
 **The core's full latency, from the first record in to `done`, is 113 cycles = 1.13 µs:**
 32 load cycles, 1 settle cycle for the last box's area, and T = 80. `tb_nms_core` pins each
-part as an equality on every batch, in simulation ([build_log.md](build_log.md), "Full
+part as an equality on every batch, in simulation ([build_log.md](../project/build_log.md), "Full
 latency, pinned"). It is the figure a whole software NMS call is compared with. Of its three
 parts, T is now also measured on silicon (above). The 32 load cycles and the 1 settle cycle
 remain simulation figures: over the UART the records arrive milliseconds apart, so the board
@@ -285,107 +285,7 @@ never loads 32 back to back.
 
 ---
 
-## 7. Software NMS on the laptop, idle (the reference row)
+## 7. Software comparison
 
-`make bench` on the i5-13500H: `performance` governor, turbo at 4.3–4.7 GHz, pinned to CPU 2
-(a P-core), one thread, commit `a61b94b`. Every answer was checked before timing: our own
-variants against the golden model bit for bit, the libraries against the same algorithm with
-`>`. Median / p99 µs per NMS call ([benchmarks/results/](../benchmarks/results/),
-`cpu-PoseidonD-2026-09-28-none`):
-
-| implementation | notebook32 | all_survive | all_equal | rand_seed0 | hostile (1,000 cycled) |
-|---|---|---|---|---|---|
-| C, scalar, `-O3 -march=native` | **0.40 / 0.56** | 1.10 / 1.44 | 0.21 / 0.23 | 1.01 / 1.32 | 1.89 / 3.79 |
-| OpenCV `NMSBoxes` | 3.95 / 5.38 | 5.27 / 7.23 | 3.74 / 5.07 | 4.97 / 6.86 | 8.77 / 13.6 |
-| torchvision `ops.nms` | 15.5 / 21.2 | 16.1 / 21.8 | 15.3 / 24.6 | 15.9 / 23.0 | 17.7 / 27.1 |
-| numpy all-pairs | 36.0 / 49.4 | 51.7 / 68.1 | 32.5 / 50.4 | 48.5 / 66.7 | 49.0 / 69.3 |
-| **the block, 100 MHz, first record to `done`** | **1.13** | **1.13** | **1.13** | **1.13** | **1.13** |
-
-The block's figure is 113 cycles, pinned as an equality in simulation (§6); it is not yet
-captured on silicon. The pure-Python integer forms (40–880 µs) are in the CSV.
-
-**Repeatability:** a second run (`-run2`) put every median within 10% of the first. The
-largest difference was torchvision's +8.5%; C and OpenCV were within 6%.
-
-**What it shows:**
-- **Plain C on a 4.7 GHz laptop core beats the block on easy batches**: 0.40 µs on
-  `notebook32` against 1.13 µs. The clock advantage is 47×. plan.md E4 expected this.
-- **The block's claim is determinism.** C's median ranges 0.21–1.89 µs with the data, and its
-  hostile p99 is 3.79 µs. The block takes 1.13 µs for every batch. On the hostile stream it
-  beats even C, by 1.7× on the median and 3.4× on the p99.
-- **Against the libraries pipelines actually call**, the block is 3–8× faster than OpenCV
-  and 14–16× faster than torchvision on medians, and further ahead on the tails.
-- **Semantics:** on 199 of the 1,000 hostile batches, `>` (the libraries) and `>=` (the spec)
-  keep different boxes. The hostile stream is weighted towards exact-threshold pairs, so
-  that rate is higher than real data would give. OpenCV also breaks ties differently from
-  the spec, on 173 hostile batches, all with tied scores. torchvision matches the spec's
-  lower-index-first order everywhere.
-
-The Pi 4 is in §8. The Pi 5 the plan names was not available.
-
----
-
-## 8. Software NMS on a Raspberry Pi 4, idle and under load
-
-`make bench` on a **Raspberry Pi 4 Model B (Rev 1.5), Cortex-A72 at 1.8 GHz**, 64-bit Raspberry
-Pi OS, gcc 14.2 at `-O3 -mcpu=native`, pinned to CPU 2, one thread per timed call. Five runs on
-2026-09-29 at commits `8fdab41`–`f8973e4`, all clean. None throttled: `vcgencmd get_throttled` read
-0x0 before and after every run, at 53–74 °C. The plan names a Pi 5, which was not available. The
-Pi 4's Cortex-A72 is the core TI's edge SoCs pair with their accelerators, and it is slower than
-the Pi 5's A76, so these rows are conservative for the Pi 5 comparison
-([benchmarks/results/](../benchmarks/results/), `cpu-raspberrypi-2026-09-29-*`).
-
-### Idle, every input group (median / p99 µs)
-
-| implementation | notebook32 | all_survive | all_equal | rand_seed0 | hostile |
-|---|---|---|---|---|---|
-| C, scalar | 2.11 / 2.15 | 7.39 / 7.43 | **1.02 / 1.04** | 6.52 / 6.56 | 8.89 / 11.7 |
-| OpenCV | 19.0 / 19.6 | 30.4 / 32.1 | 17.9 / 18.7 | 27.6 / 28.9 | 35.7 / 44.1 |
-| torchvision | 191 / 260 | 196 / 221 | 190 / 227 | 195 / 221 | 195 / 222 |
-| numpy all-pairs | 306 / 335 | 449 / 470 | 271 / 314 | 417 / 443 | 425 / 482 |
-| **the block** | **1.13** | **1.13** | **1.13** | **1.13** | **1.13** |
-
-Repeatability: a second idle run put every median within 4.4% of the first.
-
-### Under load, hostile stream (median / p99 µs)
-
-| implementation | idle | pipeline | concurrent | stress |
-|---|---|---|---|---|
-| C, scalar | 8.89 / 11.7 | 10.0 / 12.3 | 9.59 / 14.2 | 8.62 / 13.2 |
-| OpenCV | 35.7 / 44.1 | **75.8** / 86.7 | 38.0 / 78.9 | 37.1 / 47.1 |
-| torchvision | 195 / 222 | **402** / 533 | 252 / **1,372** | 344 / **1,442** |
-| numpy all-pairs | 425 / 482 | 676 / 757 | 585 / 1,164 | **1,346** / 1,699 |
-| **the block** | **1.13** | **1.13** | **1.13** | **1.13** |
-
-- **pipeline** runs a YOLOv8n inference before every timed call, in the same process, on all
-  four cores: the way a detection pipeline really runs. It is the main condition.
-- **concurrent** runs YOLOv8n continuously in a second process on the other three cores.
-- **stress** runs two `stress-ng` memory workers on the other three cores.
-- The pipeline run has 100 samples per implementation (600 inferences took 9.6 minutes), so its
-  p99 is the second-highest value. The others have 350–5,000.
-
-![Pi 4: software NMS by load against the block](images/pi4_nms_by_load.png)
-
-**What it shows:**
-- **On the Pi 4 the block is faster than every software implementation on every input except
-  one.** C wins only on `all_equal`, 1.02 µs against 1.13 µs. There all 32 boxes are identical,
-  so the first keeper suppresses the rest and sequential code stops at once, while the block
-  runs its full schedule. In the hostile stream, 0–1.6% of C calls come in under the block.
-  Elsewhere the block's lead over C is 1.9× (`notebook32`) to 7.9× (the hostile median).
-- **Load moves software, and never the block.** The pipeline load, a cold cache after every
-  inference, doubles OpenCV's and torchvision's medians. The concurrent and stress loads leave
-  torchvision's median near idle but push its p99 to about 1.4 ms, 6× its idle p99, with a
-  worst call of 1.8 ms. The block's T is 80 cycles on every batch, measured on silicon (§6).
-- **Against the libraries edge pipelines call**, the block is 16–67× faster than OpenCV and
-  170–360× faster than torchvision on medians, and up to about 1,300× on the p99 under load.
-- **Even plain C has a tail:** its worst idle call on the hostile stream is 82 µs against a
-  9 µs median. The OS interrupts it. That is the variance a fixed-cycle block doesn't have.
-
-**Semantics** match the laptop: every answer agreed with its reference in every run, and OpenCV's
-tie order differed on the same 173 hostile batches.
-
-**Feasibility sweep on the Pi 4** (N = 8, 16, 32, unpinned): OpenCV 7.7 / 11.4 / 20.4 µs,
-torchvision 189 / 192 / 195 µs, numpy 172 / 207 / 289 µs, with torchvision and OpenCV
-agreeing at every N. [images/nms_time_vs_boxes.png](images/nms_time_vs_boxes.png) plots these
-beside the laptop.
-
+The comparison with software NMS — a laptop and a Raspberry Pi 4, idle and under load — is in
+[benchmarks.md](benchmarks.md). This document holds the hardware measurements it relies on.

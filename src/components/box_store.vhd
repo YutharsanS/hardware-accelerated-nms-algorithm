@@ -1,6 +1,6 @@
 -- box_store -- the batch: 32 payload records and their 32 areas, in registers.
 --
--- REGISTERS, NOT BLOCK RAM (docs/architecture.md section 8). The lanes read P candidate
+-- REGISTERS, NOT BLOCK RAM (docs/design/architecture.md section 8). The lanes read P candidate
 -- payloads plus one row-source payload every cycle -- 768 bits/cycle at P = 16, against the
 -- 72 bits/cycle a BRAM36 port can deliver -- so the store is 2,048 + 768 flip-flops.
 --
@@ -20,7 +20,7 @@
 --   cand_*(j)  lane j's candidate, slot j + col_grp*P -- static column striping, so each
 --              lane muxes N/P payloads rather than needing an N:1 crossbar
 --
--- The row-source mux is the path docs/fsm_design.md section 9 flags: it sits between
+-- The row-source mux is the path docs/design/fsm_design.md section 9 flags: it sits between
 -- nms_ctrl's index_table and lane stage 1, and is measured in context at C4.
 --
 -- `rst` clears the area pipeline's valid bit only. Payloads have no validity -- present_mask

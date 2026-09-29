@@ -2,7 +2,7 @@
 
 > **An exploration, not part of the NMS accelerator.** This was the project's Phase 0. It
 > measured 3D Gaussian Splatting's depth sort as a candidate workload before the team chose
-> NMS ([plan.md](../../docs/plan.md), "Direction"). It is kept as the evidence for that
+> NMS ([plan.md](../../docs/project/plan.md), "Direction"). It is kept as the evidence for that
 > decision and as future work.
 
 Measured on the Tanks & Temples **`train`** scene (1,074,761 Gaussians, SH degree 3,

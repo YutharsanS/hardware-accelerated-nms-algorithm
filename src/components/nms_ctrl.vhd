@@ -1,6 +1,6 @@
 -- nms_ctrl -- the all-pairs control FSM: rank-ordered row fill, resolve trailing by L+2.
 --
--- The design, with the cycle-level timeline this file implements, is docs/fsm_design.md.
+-- The design, with the cycle-level timeline this file implements, is docs/design/fsm_design.md.
 -- In brief:
 --
 --   IDLE --start--> SORT (C) --> FILL (N*G) --> DRAIN (L+1) --> DONE (1) --> IDLE

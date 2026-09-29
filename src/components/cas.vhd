@@ -7,7 +7,7 @@
 --   dir_desc = '0'  ascending   y0 = min(a, b),  y1 = max(a, b)
 --   dir_desc = '1'  descending  y0 = max(a, b),  y1 = min(a, b)
 --
--- House style (docs/architecture.md section 10): combinational logic is written as
+-- House style (docs/design/architecture.md section 10): combinational logic is written as
 -- concurrent assignments, never as a combinational process. There is no sensitivity list
 -- to get wrong, so the usual sim/synth mismatch is unrepresentable rather than merely
 -- avoided, and it synthesises identically to a process(all).
@@ -47,7 +47,7 @@ architecture rtl of cas is
     -- wants it when a <= b, which the xor gives without a second comparator. The a = b
     -- case swaps under dir_desc = '1', which is unobservable because the two values are
     -- equal -- and irrelevant in this design regardless, since the sort key is a strict
-    -- total order (docs/architecture.md section 6) so equal keys never reach a CAS.
+    -- total order (docs/design/architecture.md section 6) so equal keys never reach a CAS.
     signal swap : boolean;
 
 begin

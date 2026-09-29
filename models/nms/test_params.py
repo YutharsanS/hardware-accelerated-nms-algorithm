@@ -1,4 +1,4 @@
-"""Checks that the frozen constants agree with docs/architecture.md."""
+"""Checks that the frozen constants agree with docs/design/architecture.md."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from models.nms import params as p
 
-ARCH_MD = Path(__file__).resolve().parents[2] / "docs" / "architecture.md"
+ARCH_MD = Path(__file__).resolve().parents[2] / "docs" / "design" / "architecture.md"
 
 
 def test_internally_consistent() -> None:

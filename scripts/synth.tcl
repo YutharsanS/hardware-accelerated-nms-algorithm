@@ -1,5 +1,5 @@
 # Out-of-context synthesis and implementation of one module, for the area and timing
-# gates in docs/plan.md (B2.2, B3.2, B4.2).
+# gates in docs/project/plan.md (B2.2, B3.2, B4.2).
 #
 #   vivado -mode batch -source scripts/synth.tcl -tclargs <module> [period_ns] [G=V ...]
 #

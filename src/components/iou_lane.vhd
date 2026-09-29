@@ -4,7 +4,7 @@
 -- ... so it muxes 32/P payloads rather than needing a 32:1 crossbar; that mux lives in the
 -- surrounding logic, and the lane sees one pair per cycle.
 --
--- THE PREDICATE, and the reason it looks like this (docs/architecture.md sections 5 and 7):
+-- THE PREDICATE, and the reason it looks like this (docs/design/architecture.md sections 5 and 7):
 --
 --     suppress  when  I * 2**K_SHIFT  >=  T_INT * U
 --
@@ -78,7 +78,7 @@ architecture rtl of iou_lane is
     -- Signed, one bit wider than a coordinate, spanning -4095 .. 4095. The sign bit *is*
     -- the clamp decision, so a single 13-bit subtract yields both "do the boxes miss?" and
     -- the overlap extent -- cheaper than a separate comparator, and it is the
-    -- T_INTERMEDIATE_W signal docs/architecture.md section 4 specifies.
+    -- T_INTERMEDIATE_W signal docs/design/architecture.md section 4 specifies.
     signal t_w : signed(T_INTERMEDIATE_W - 1 downto 0) := (others => '0');
     signal t_h : signed(T_INTERMEDIATE_W - 1 downto 0) := (others => '0');
 
@@ -158,7 +158,7 @@ begin
                 suppress <= '0';
             end if;
 
-            -- A live check of the proof in docs/architecture.md section 7: the clamps make
+            -- A live check of the proof in docs/design/architecture.md section 7: the clamps make
             -- area = 0 imply I = 0, and otherwise I <= min(area1, area2), so the union can
             -- never underflow. Simulation-only -- it mirrors the same assertion in the
             -- golden model, and an unsigned wrap here would otherwise look like a

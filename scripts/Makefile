@@ -14,14 +14,14 @@
 #   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
-#   make bench           benchmark NMS against its competitors (docs/plan.md Phase E):
+#   make bench           benchmark NMS against its competitors (docs/project/plan.md Phase E):
 #                        TARGET=cpu|fpga, LOAD=none|pipeline|concurrent|stress, PORT=...,
 #                        BENCH_ARGS="--impls c_scalar opencv --cases hostile"
 #   make bench-report    merge benchmarks/results/*.csv into Markdown tables
 #   make xsim TB=tb_x    the same testbench under Vivado xsim, as a second simulator
 #   make clean           remove build artefacts
 #
-# Language policy (docs/plan.md Part 2): synthesisable RTL is written in the VHDL-93
+# Language policy (docs/project/plan.md Part 2): synthesisable RTL is written in the VHDL-93
 # subset so Vivado's partial VHDL-2008 support can never bite, while testbenches use
 # VHDL-2008 for HREAD. Everything is *analysed* at --std=08, which accepts both.
 
@@ -91,7 +91,7 @@ TB_ALL  = $(basename $(notdir $(TB_SRC)))
 SWEEP_tb_bitonic32 = -gPIPE_CUTS=0 -gPIPE_CUTS=2 -gPIPE_CUTS=8
 
 # The lane runs at the shipped threshold and at the maximum. Only T_INT=255 drives the
-# RHS above 2**31; see docs/build_log.md B4.1 for why the 33rd bit stays unreachable.
+# RHS above 2**31; see docs/project/build_log.md B4.1 for why the 33rd bit stays unreachable.
 SWEEP_tb_iou_lane  = -gT_INT=128 -gT_INT=255
 
 # The control FSM runs at the shipped point, the old sorter default, the combinational
@@ -132,8 +132,8 @@ PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the
 # 267 MB .ply under models/data is not a concern). Formatting is enforced only on .py
 # sources: reformatting notebook cells is churn that fights nbstripout for no benefit.
-PYLINT_SRC   = models benchmarks explorations
-PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks explorations
+PYLINT_SRC   = models benchmarks explorations tests
+PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks explorations tests
 
 .PHONY: all test test-full lint clean help $(TB_ALL) synth xsim impl program host bench bench-report ila
 .DEFAULT_GOAL := help
@@ -193,7 +193,7 @@ $(TB_ALL): analyse
 # is how B3.2 sweeps PIPE_CUTS.
 #
 #   make synth MOD=bitonic32 PERIOD=20 GENERICS="PIPE_CUTS=0"
-# Second-opinion simulation under Vivado xsim (docs/plan.md L6): two independent simulators
+# Second-opinion simulation under Vivado xsim (docs/project/plan.md L6): two independent simulators
 # agreeing is far stronger evidence than one. Same RTL, same testbench, same vectors. It runs
 # in build/xsim, with a `models` symlink so the testbenches' repository-relative vector
 # paths resolve unchanged. xsim reports assertion errors and carries on rather than
@@ -223,7 +223,7 @@ impl:
 	vivado -mode batch -nolog -nojournal -source scripts/impl.tcl -tclargs $(GENERICS) \
 	    $(if $(filter 1,$(ILA)),ILA)
 
-# Capture T on silicon (docs/plan.md Phase E, E3): program the ILA build from
+# Capture T on silicon (docs/project/plan.md Phase E, E3): program the ILA build from
 # `make impl ILA=1`, capture WINDOWS batches sent by the host, then check that every one
 # measures start -> done = T and draw the first as docs/images/onchip_latency.png.
 #   make ila [WINDOWS=16] [PORT=/dev/ttyUSB1]
@@ -256,7 +256,7 @@ ARGS ?= --selftest
 host:
 	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
 
-# Benchmark NMS against its competitors (docs/plan.md Phase E, E.4). The target names what
+# Benchmark NMS against its competitors (docs/project/plan.md Phase E, E.4). The target names what
 # is measured and the results name which machine, so the same command runs on the laptop
 # or the Pi 5. Results land in benchmarks/results/<target>-<host>-<date>-<load>.*
 #   make bench                                    every software variant here, idle (E1)
@@ -274,7 +274,7 @@ bench:
 	$(PYTHON) $(BENCH_EXTRAS) python -m benchmarks --target $(TARGET) --load $(LOAD) \
 	    --port $(PORT) $(BENCH_ARGS)
 
-# Merge every run into the tables for docs/results.md; HIST=docs/images also draws the
+# Merge every run into the tables for docs/results/hardware.md; HIST=docs/images also draws the
 # E2 histograms (needs the bench extra for matplotlib).
 HIST ?=
 bench-report:

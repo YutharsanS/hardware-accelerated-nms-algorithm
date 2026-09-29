@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `scripts/` — Makefiles and utility scripts (GHDL automation, Python formatters like Ruff/Black)
 - `benchmarks/` — Phase E evaluation scripts against competitor NMS implementations; results under `benchmarks/results/`
 - `deployment/` — hardware constraints (e.g., `.xdc` files) and synthesis scripts for physical FPGA deployment
-- `docs/development_guide.md` — the canonical GHDL/GTKWave workflow reference (see below)
+- `docs/user_guide.md` — the canonical GHDL/GTKWave workflow reference (see below)
 
 
 ## Claude skills
@@ -39,8 +39,8 @@ If the student is struck on project specific configurations guide them using the
 
 ## Additional Docs
 If the student needs more details, prompts them to read these documents
-@docs/architecture.md
-@docs/developement_guide.md
+@docs/design/architecture.md
+@docs/user_guide.md
 
 ## Development Standards
 

@@ -9,7 +9,7 @@
 # to every PR targeting this branch without each branch needing its own copy.
 #
 # Synthesis is NOT run here. Area and timing need Vivado, which is a ~60 GB licensed
-# install, so those gates stay manual and their results are recorded in docs/results.md.
+# install, so those gates stay manual and their results are recorded in docs/results/hardware.md.
 # CI covers correctness only.
 
 name: CI

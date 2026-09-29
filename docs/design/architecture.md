@@ -136,7 +136,7 @@ expression, so agreement with the RTL is bit-exact by construction rather than b
 With `T_INT = 128` this reduces to `2·I ≥ U` — two shifts and a compare. It is written as a
 multiply so a different threshold works. **Synthesis was expected to fold the constant and did
 not:** Vivado maps `T_INT × U` to a second DSP, so a lane costs **2 DSPs, not 1** (measured,
-[results.md](results.md) §3). Recovering the fold is open; it would halve the DSP budget but
+[hardware.md](../results/hardware.md) §3). Recovering the fold is open; it would halve the DSP budget but
 changes nothing else.
 
 ---
@@ -199,7 +199,7 @@ and it also removes a divide-by-zero that a float formulation would hit.
 |---|---|
 | `frame_rx` / `frame_tx` | magic hunt, CRC-8, `seq`, idle timeout, byte↔record packing |
 | `box_store` | 32×64 b payloads + 32×24 b areas, areas computed during `LOAD` |
-| `bitonic32` | 240 CAS on 21-bit keys, `PIPE_CUTS = 8` → 8 cycles, the lowest setting that meets 100 MHz (119.2 MHz; 2 cuts reach only 53.9 MHz, [results.md](results.md) §2). Output ascending, so the rank table reads reversed: `index_table(r) = idx(out(31−r))` |
+| `bitonic32` | 240 CAS on 21-bit keys, `PIPE_CUTS = 8` → 8 cycles, the lowest setting that meets 100 MHz (119.2 MHz; 2 cuts reach only 53.9 MHz, [hardware.md](../results/hardware.md) §2). Output ascending, so the rank table reads reversed: `index_table(r) = idx(out(31−r))` |
 | `iou_lane` × P | `P = 16` default, `P ∈ {1,2,4,8,16,32}`. Lane *j* owns columns j, j+P, …, so it muxes 32/P payloads rather than a 32:1 crossbar |
 | row buffer | 2 rows of `S` plus `idx_r`, streaming |
 | resolve | one rank per cycle, trailing the fill by `L` |
@@ -210,7 +210,7 @@ and it also removes a divide-by-zero that a float formulation would hit.
 **Issue registers, I = 2.** In `nms_core`, two register stages sit between the FSM's issue and
 lane stage 1: one after the row/column selects, one after the payload muxes. Wired directly,
 that path (`index_table` read → 32:1 × 72 b row mux → lane stage 1) measures 14.9 ns in the
-placed core, 67 MHz. With I = 2 the core closes 100 MHz ([results.md](results.md) §5). To the
+placed core, 67 MHz. With I = 2 the core closes 100 MHz ([hardware.md](../results/hardware.md) §5). To the
 FSM these are simply more lane stages.
 
 **FSM:** `IDLE → LOAD → SORT(C) → FILL(N·⌈N/P⌉, resolve overlapped) → DRAIN(L+1) → DONE`, with
@@ -225,11 +225,11 @@ T = N²/P + L + I + C + 2
 
 At P = 16, L = 4, I = 2 and C = 8 that is **80 cycles = 0.80 µs** on the 100 MHz clock.
 (Earlier revisions said 72 cycles, which assumed `PIPE_CUTS = 2` and no issue registers.
-Neither meets 100 MHz; see [results.md](results.md) §5.) There is no
+Neither meets 100 MHz; see [hardware.md](../results/hardware.md) §5.) There is no
 data-dependent term, so worst case = best case for every possible input. That is the
 "deterministic execution" property, and it is the claim that actually holds.
 
-**Area budget at P = 16** (estimates; measured figures are in [results.md](results.md), which
+**Area budget at P = 16** (estimates; measured figures are in [hardware.md](../results/hardware.md), which
 supersedes this table wherever a block has actually been built):
 
 | block | LUT | FF | DSP |
@@ -242,7 +242,7 @@ supersedes this table wherever a block has actually been built):
 | masks, resolve, FSM, UART | ~900 | ~450 | 0 |
 | **total** | **≈12,320 (59%)** | **≈7,240 (17%)** | **17 (19%)** |
 
-> **Two estimates here have been overtaken by measurement** ([results.md](results.md) §4). At the
+> **Two estimates here have been overtaken by measurement** ([hardware.md](../results/hardware.md) §4). At the
 > `PIPE_CUTS = 8` that timing requires, the sorter is 8,112 LUT and 5,376 FF. The lanes take
 > **2 DSPs each** (§5), so the projected totals are **≈11,550 LUT (55.5%), ≈10,490 FF (25.2%) and
 > 33 DSP (36.7%)**. The design still fits with margin.
@@ -278,7 +278,7 @@ supersedes this table wherever a block has actually been built):
   does **not** fit this device. A folded sorter is the path past that.
 * **The UART is a test harness, not the datapath.** Transport is 2.70 ms against 0.80 µs of
   compute. The report must present **core latency** and determinism, not a system speedup;
-  end-to-end, doing NMS on the host CPU is faster. See `docs/build_log.md` and the plan's Part 1e.
+  end-to-end, doing NMS on the host CPU is faster. See `docs/project/build_log.md` and the plan's Part 1e.
 
 ---
 

@@ -10,7 +10,7 @@ a bound.** No term depends on the data, so worst case equals best case for every
 Everything is verified **bit-exactly** against a Python golden model, a single 32-bit
 equality with no tolerance band, under two independent simulators. The full board design
 meets 100 MHz on the real part, and its bitstream is built
-([docs/results.md](docs/results.md) §5).
+([docs/results/hardware.md](docs/results/hardware.md) §5).
 
 This file is the general guide: environment setup, simulation, synthesis, board bring-up.
 Read [Scope and honest limits](#scope-and-honest-limits) before quoting any performance
@@ -64,7 +64,7 @@ Check it with `uv run nbstripout --status`.
 ## 2. Simulate
 
 There are **two test tiers**. Both run every check; they differ only in volume
-([docs/build_log.md](docs/build_log.md) M3).
+([docs/project/build_log.md](docs/project/build_log.md) M3).
 
 ```bash
 make test         # what CI runs on every pull request: ruff, pytest, every testbench  (~1.5 min)
@@ -173,7 +173,7 @@ adding one there reaches every VHDL testbench without editing any VHDL.
 two sides of the build, and they cannot drift: `models/nms/test_params_agree.py` runs GHDL and
 compares every constant by name, in both directions.
 
-**`docs/architecture.md` is normative.** Change it first; the two constant files mirror it.
+**`docs/design/architecture.md` is normative.** Change it first; the two constant files mirror it.
 
 ---
 
@@ -200,7 +200,7 @@ make xsim TB=tb_nms_core                          # second-simulator cross-check
   `deployment/basys3.xdc` on real I/O, and writes `build/impl/nms_top.bit` **only if setup and
   hold both pass**.
 
-Measured, from [docs/results.md](docs/results.md):
+Measured, from [docs/results/hardware.md](docs/results/hardware.md):
 
 | design | LUT | FF | DSP | timing at 100 MHz |
 |---|---|---|---|---|
@@ -211,7 +211,7 @@ Measured, from [docs/results.md](docs/results.md):
 
 **The timing margin is thin, and the sorter is the critical path.** If a change makes
 `make impl` fail timing, these are the documented remedies, cheapest first
-([docs/results.md](docs/results.md) §5):
+([docs/results/hardware.md](docs/results/hardware.md) §5):
 1. re-place the sorter's register cuts with the `CUT_AFTER` generic;
 2. `PIPE_CUTS = 9`, costing one cycle;
 3. duplicate the payload register that fans out to the 16 lanes;
@@ -280,7 +280,7 @@ it aborts a batch in progress and clears the LEDs.
 The host program is `models/nms/host.py`. It runs on the PC plugged into the board's
 micro-USB port and talks to the UART, which is **`/dev/ttyUSB1`**; `ttyUSB0` is the JTAG
 interface Vivado uses. The wire protocol is frozen in
-[docs/architecture.md](docs/architecture.md) §3: **264 bytes in, 6 out**, every multi-byte
+[docs/design/architecture.md](docs/design/architecture.md) §3: **264 bytes in, 6 out**, every multi-byte
 field most-significant byte first.
 
 ```
@@ -321,7 +321,7 @@ echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB1/latency_timer
 
 Measure latency both ways: `--latency 500 --leave-latency-timer` at the 16 ms default, then
 `--latency 500` at 1 ms. The difference is the gap between a measured number and a
-theoretical one ([docs/plan.md](docs/plan.md) Part 1b).
+theoretical one ([docs/project/plan.md](docs/project/plan.md) Part 1b).
 
 **When `--selftest` does not pass:**
 
@@ -352,13 +352,13 @@ docs/               see below
 
 | document | what it is |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | **normative.** Record format, wire protocol, datapath widths, predicate, sort key, latency, Basys 3 reference |
-| [docs/plan.md](docs/plan.md) | design rationale, the build sequence, decisions and their evidence |
-| [docs/fsm_design.md](docs/fsm_design.md) | the control FSM's cycle-level design, reviewed before any RTL |
-| [docs/results.md](docs/results.md) | every measured area and timing figure |
-| [docs/build_log.md](docs/build_log.md) | one entry per step: what was built, measured, and what failed on the way |
-| [docs/development_guide.md](docs/development_guide.md) | GHDL/GTKWave background, `uv` and `nbstripout` setup |
-| [docs/NMS.md](docs/NMS.md) | narrative introduction to the algorithm |
+| [docs/design/architecture.md](docs/design/architecture.md) | **normative.** Record format, wire protocol, datapath widths, predicate, sort key, latency, Basys 3 reference |
+| [docs/project/plan.md](docs/project/plan.md) | design rationale, the build sequence, decisions and their evidence |
+| [docs/design/fsm_design.md](docs/design/fsm_design.md) | the control FSM's cycle-level design, reviewed before any RTL |
+| [docs/results/hardware.md](docs/results/hardware.md) | every measured area and timing figure |
+| [docs/project/build_log.md](docs/project/build_log.md) | one entry per step: what was built, measured, and what failed on the way |
+| [docs/user_guide.md](docs/user_guide.md) | GHDL/GTKWave background, `uv` and `nbstripout` setup |
+| [docs/design/nms_primer.md](docs/design/nms_primer.md) | narrative introduction to the algorithm |
 | [explorations/gaussian_splatting/](explorations/gaussian_splatting/README.md) | the 3DGS measurements behind the future-work path |
 | [docs/README.md](docs/README.md) | repository structure and the `/commit` · `/pr` Claude Code skills |
 
@@ -389,7 +389,7 @@ docs/               see below
 
 ## Status
 
-Stage labels follow [docs/plan.md](docs/plan.md) Part 3.
+Stage labels follow [docs/project/plan.md](docs/project/plan.md) Part 3.
 
 | stage | what | state |
 |---|---|---|
@@ -418,7 +418,7 @@ Stated here rather than buried, because they bound every claim above.
   AXI-Stream interface is where such a block belongs, and that is not built.
 - **Name the processor class whenever you say "faster".** Against Python the core is 45–600×
   faster (measured). It is ~40× faster than a Cortex-M7 and ~3.5× *slower* than hand-tuned
-  AVX2 on a 3 GHz x86 (both estimates, [docs/plan.md](docs/plan.md) Part 1e). "Faster than any
+  AVX2 on a 3 GHz x86 (both estimates, [docs/project/plan.md](docs/project/plan.md) Part 1e). "Faster than any
   processor" is false.
 - **N = 32 is a hard limit, not a starting point.** The combinational network is Θ(N log²N):
   N = 64 needs 672 CAS ≈ 20,160 LUT and does not fit this device at all. A folded sorter is
@@ -427,9 +427,9 @@ Stated here rather than buried, because they bound every claim above.
 - **The host must not produce an ordering.** Reaching 32 boxes from a real detector's output
   needs host-side selection. The contract is a Θ(n) confidence threshold, then the top 32 by
   confidence if more survive, which is a selection and not a sort. Any other cap changes the
-  result compared with true NMS ([docs/plan.md](docs/plan.md) Part 2).
+  result compared with true NMS ([docs/project/plan.md](docs/project/plan.md) Part 2).
 
-[docs/plan.md](docs/plan.md) Part 1e and Part 6 carry the measurements behind each of these,
+[docs/project/plan.md](docs/project/plan.md) Part 1e and Part 6 carry the measurements behind each of these,
 including the several that contradicted earlier versions of this design.
 
 ---
