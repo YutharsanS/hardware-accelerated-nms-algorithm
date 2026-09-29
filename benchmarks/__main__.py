@@ -30,6 +30,7 @@ import gzip
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from benchmarks import inputs
@@ -128,12 +129,39 @@ def time_cpu(
     return out
 
 
+def _threads_on_every_cpu(cpus: int) -> int:
+    """Count this process's threads allowed on all ``cpus`` CPUs, from ``/proc``.
+
+    Args:
+        cpus: The machine's CPU count.
+
+    Returns:
+        How many threads are not pinned; 0 if ``/proc`` can't be read.
+    """
+    count = 0
+    for status in Path("/proc/self/task").glob("*/status"):
+        try:
+            text = status.read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.startswith("Cpus_allowed_list:"):
+                count += line.split(":", 1)[1].strip() == f"0-{cpus - 1}"
+    return count
+
+
 def time_pipeline(
     impls: list[cpu_target.Impl],
     groups: dict[str, list[Batch]],
     args: argparse.Namespace,
 ) -> tuple[dict[tuple[str, str], list[float]], dict]:
     """Time one NMS call after each detector inference, round-robin over the pairs.
+
+    The detector runs as a real pipeline runs it, on every core with torch's default
+    threads, while the timed NMS call runs on ``--cpu``. The main thread is pinned once and
+    never moves, so no call pays for a migration. torch's worker threads keep the CPU mask
+    they were created with, so the detector is built -- and its thread pool created -- while
+    the process may still use every core, and only then does the main thread pin itself.
 
     Args:
         impls: Implementations.
@@ -143,22 +171,53 @@ def time_pipeline(
     Returns:
         Samples keyed by ``(impl, case)``, and the load's metadata.
     """
+    import torch
+
     from benchmarks.workloads.detector import Detector
 
-    detector = Detector(args.weights, args.images)
+    every_cpu = set(range(os.cpu_count() or 1))
+    detector_threads = len(every_cpu)
+    os.sched_setaffinity(0, every_cpu)
+    torch.set_num_threads(detector_threads)
+    t0 = time.perf_counter()
+    detector = Detector(args.weights, args.images)  # its warm-up creates torch's pool
+    os.sched_setaffinity(0, {args.cpu})  # the main thread only, and for good
+    wide_workers = _threads_on_every_cpu(len(every_cpu))
     pairs = [(impl, case) for impl in impls for case in groups]
     prepared = {
         (impl.name, case): [impl.prepare(b) for b in groups[case]]
         for impl, case in pairs
     }
     out: dict[tuple[str, str], list[float]] = {(i.name, c): [] for i, c in pairs}
-    for k in range(args.frames * len(pairs)):
+    total = args.frames * len(pairs)
+    print(
+        f"pipeline: {total} inferences ({len(pairs)} implementation x group pairs, "
+        f"{args.frames} frames each); detector on {detector_threads} threads, "
+        f"{wide_workers} of them free to use every core; NMS on CPU {args.cpu}",
+        flush=True,
+    )
+    start = time.perf_counter()
+    for k in range(total):
         impl, case = pairs[k % len(pairs)]
         detector.step()
         inputs_ = prepared[impl.name, case]
         n = len(out[impl.name, case])
         out[impl.name, case].append(impl.timed(inputs_[n % len(inputs_)])[1])
-    return out, {"load_weights": args.weights, "load_frames": detector.k}
+        done = k + 1
+        if done == 1 or done % max(1, total // 20) == 0 or done == total:
+            elapsed = time.perf_counter() - start
+            eta = elapsed / done * (total - done)
+            print(
+                f"  {done}/{total} frames, {elapsed:.0f} s elapsed, ~{eta:.0f} s left",
+                flush=True,
+            )
+    return out, {
+        "load_weights": args.weights,
+        "load_frames": detector.k,
+        "load_detector_threads": detector_threads,
+        "load_threads_on_every_cpu": wide_workers,
+        "load_setup_s": round(start - t0, 1),
+    }
 
 
 def run_cpu(
