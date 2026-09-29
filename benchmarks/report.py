@@ -233,9 +233,20 @@ def main() -> None:
         return
     print(render(runs))
     if args.hist:
-        for run in runs:
+        # One figure per machine, target and load. A repeat run (``--tag run2``) is there
+        # for the within-10% check on its numbers; drawing it again duplicates the figure.
+        drawn: set[tuple[str, str, str]] = set()
+        untagged_first = sorted(
+            runs, key=lambda r: "--tag" in r["meta"].get("argv", [])
+        )
+        for run in untagged_first:
+            m = run["meta"]
+            key = (m.get("host", ""), m.get("target", ""), m.get("load", ""))
+            if key in drawn or not m.get("valid", True):
+                continue
             png = histograms(run, args.dir, args.hist)
             if png:
+                drawn.add(key)
                 print(f"wrote {png}")
 
 

@@ -95,3 +95,11 @@ xelab.pb
 xsim.dir/
 .Xil/
 *.wdb
+
+# =========================
+# Benchmarks
+# =========================
+
+# YOLO weights: Ultralytics downloads them into the working directory on first use
+# (make bench LOAD=pipeline|concurrent). Re-downloadable and AGPL-3.0, so never committed.
+*.pt
