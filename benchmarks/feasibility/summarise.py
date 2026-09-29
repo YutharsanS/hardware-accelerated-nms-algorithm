@@ -32,10 +32,6 @@ from models.nms import params as p
 
 CLOCK_MHZ = 100.0
 
-COLORS = {"torchvision": "#2a78d6", "opencv": "#eb6834", "numpy_allpairs": "#1baf7a"}
-BLOCK_COLOR = "#4a3aa7"
-INK, MUTED, SURFACE = "#0b0b0b", "#52514e", "#fcfcfb"
-
 
 def block_us() -> float:
     """Return the block's latency at 100 MHz, from the first record in, in microseconds.
@@ -113,13 +109,13 @@ def summarise_counts(path: Path) -> dict:
 
 
 def load_timings(directory: Path) -> list[dict]:
-    """Read every timing CSV and tag each row with its host and CPU.
+    """Read every timing CSV and tag each row with its machine and run conditions.
 
     Args:
         directory: Where ``time_vs_boxes.py`` wrote its output.
 
     Returns:
-        All rows, numeric fields converted.
+        All rows, numeric fields converted, with ``host`` and ``conditions`` added.
     """
     rows = []
     for f in sorted(directory.glob("time_*.csv")):
@@ -127,94 +123,152 @@ def load_timings(directory: Path) -> list[dict]:
         label = (meta["board"] or meta["cpu"]).replace(
             "13th Gen Intel(R) Core(TM) ", ""
         )
+        pinned = len(meta.get("affinity", [])) == 1
+        conditions = f"{meta.get('governor') or 'unknown'} governor, " + (
+            "pinned to one core" if pinned else "not pinned"
+        )
         for r in csv.DictReader(f.open()):
             rows.append(
                 {
                     **{k: float(v) if k != "impl" else v for k, v in r.items()},
                     "host": label,
+                    "conditions": conditions,
                     "source": f.stem,
                 }
             )
     return rows
 
 
+def _spread(ys: list[float], min_decades: float = 0.34) -> list[float]:
+    """Move label heights apart on a log axis so two-line labels don't overlap.
+
+    Args:
+        ys: The values the labels belong to.
+        min_decades: The smallest gap between labels, in powers of ten.
+
+    Returns:
+        Label heights, in the input order, each within reach of its value.
+    """
+    order = sorted(range(len(ys)), key=lambda i: ys[i])
+    logs = [float(np.log10(ys[i])) for i in order]
+    for k in range(1, len(logs)):
+        logs[k] = max(logs[k], logs[k - 1] + min_decades)
+    out = [0.0] * len(ys)
+    for k, i in enumerate(order):
+        out[i] = 10 ** logs[k]
+    return out
+
+
+def _panel_title(host: str) -> str:
+    if "Raspberry Pi 4" in host:
+        return "Raspberry Pi 4 (Cortex-A72, 1.8 GHz)"
+    return f"Laptop ({host})"
+
+
 def plot(timings: list[dict], png: Path) -> None:
-    """Draw software time against N, with the block's fixed latency.
+    """Draw software time against N, one panel per machine, against the block.
+
+    Every line is labelled at its end with its N = 32 median; the shaded band runs from
+    each library's median to its p99; the block is the labelled violet line.
 
     Args:
         timings: Rows from :func:`load_timings`, already limited to the plotted N.
         png: Output path.
     """
-    fig, ax = plt.subplots(figsize=(8, 6), dpi=150, facecolor=SURFACE)
-    ax.set_facecolor(SURFACE)
-    hosts = sorted({r["host"] for r in timings})
-    styles = ["-", "--", ":", "-."]
-    for h, style in zip(hosts, styles, strict=False):
-        for impl, color in COLORS.items():
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    from benchmarks import figstyle as fs
+
+    hosts = sorted({r["host"] for r in timings}, key=lambda h: "Raspberry" in h)
+    ns = sorted({r["n"] for r in timings})
+    fig, axes = plt.subplots(
+        1,
+        len(hosts),
+        figsize=(4.6 * len(hosts) + 1.2, 5.2),
+        dpi=150,
+        facecolor=fs.SURFACE,
+        sharey=True,
+        squeeze=False,
+    )
+    for ax, host in zip(axes[0], hosts, strict=True):
+        fs.style_axes(ax)
+        conditions = next(r["conditions"] for r in timings if r["host"] == host)
+        ends: list[tuple[float, float, str]] = []
+        for impl in ("torchvision", "numpy_allpairs", "opencv"):
             rs = sorted(
-                (r for r in timings if r["host"] == h and r["impl"] == impl),
+                (r for r in timings if r["host"] == host and r["impl"] == impl),
                 key=lambda r: r["n"],
             )
             if not rs:
                 continue
-            n = [r["n"] for r in rs]
+            color = fs.IMPL_COLORS[impl]
+            x = [r["n"] for r in rs]
+            med = [r["median_us"] for r in rs]
+            ax.fill_between(
+                x, med, [r["p99_us"] for r in rs], color=color, alpha=0.15, lw=0
+            )
             ax.plot(
-                n,
-                [r["median_us"] for r in rs],
-                style,
+                x,
+                med,
                 color=color,
                 lw=2,
                 marker="o",
-                ms=5,
-                label=f"{impl} — {h}",
+                ms=6,
+                markeredgecolor=fs.SURFACE,
+                markeredgewidth=1.5,
             )
-            ax.fill_between(
-                n,
-                [r["median_us"] for r in rs],
-                [r["p99_us"] for r in rs],
-                color=color,
-                alpha=0.12,
-                lw=0,
+            ends.append(
+                (
+                    med[-1],
+                    x[-1],
+                    f"{fs.IMPL_NAMES[impl]}\n{med[-1]:.3g} µs at N = {int(x[-1])}",
+                )
             )
-    ns = sorted({r["n"] for r in timings})
-    ax.plot(
-        ns,
-        [block_us()] * len(ns),
-        color=BLOCK_COLOR,
-        lw=2.5,
-        label="this block at 100 MHz, load included (same at every N ≤ 32)",
+        for y_label, (y, x_end, text) in zip(
+            _spread([e[0] for e in ends]), ends, strict=True
+        ):
+            ax.annotate(
+                text,
+                xy=(x_end, y),
+                xytext=(x_end * 1.18, y_label),
+                color=fs.INK,
+                fontsize=7.5,
+                va="center",
+                arrowprops={"arrowstyle": "-", "color": fs.MUTED, "lw": 0.6},
+            )
+        fs.block_hline(ax, x_text=ns[-1] * 2.3)
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        ax.set_xticks(ns, [str(int(n)) for n in ns])
+        ax.minorticks_off()
+        ax.set_xlim(ns[0] / 1.25, ns[-1] * 4.2)
+        ax.set_ylim(0.6, 1000)
+        ax.set_xlabel("boxes in the batch, N", color=fs.INK, fontsize=9)
+        ax.set_title(
+            f"{_panel_title(host)}\n{conditions}", color=fs.INK, loc="left", fontsize=9
+        )
+    axes[0][0].set_ylabel("time per NMS call, µs (log scale)", color=fs.INK, fontsize=9)
+    fs.titles(
+        fig,
+        "Software NMS gets slower as N grows; the FPGA block does not",
+        "Real candidate sets: the top N YOLOv8n detections of 50 COCO images. "
+        "One thread per call. Line = median, shaded band = median to p99.",
     )
-    ax.annotate(
-        f"{block_us():.2f} µs, every batch",
-        (ns[-1], block_us()),
-        xytext=(-4, 6),
-        textcoords="offset points",
-        ha="right",
-        color=INK,
-        fontsize=8,
-    )
-    ax.set_xscale("log", base=2)
-    ax.set_yscale("log")
-    ax.set_xticks(ns, [str(int(n)) for n in ns])
-    ax.minorticks_off()
-    ax.set_ylim(bottom=0.5)
-    ax.set_xlabel("boxes entering NMS, N", color=INK)
-    ax.set_ylabel("time per NMS call, µs (line median, band to p99)", color=INK)
-    ax.set_title("Software NMS against the block, N ≤ 32", color=INK, loc="left")
-    ax.grid(True, which="major", color="#e4e3df", lw=0.8)
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-    ax.tick_params(colors=MUTED)
-    ax.legend(
-        fontsize=7,
-        frameon=False,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.14),
-        ncol=2,
-    )
-    fig.tight_layout()
+    handles = [
+        Line2D(
+            [], [], color=fs.IMPL_COLORS[i], lw=2, marker="o", label=fs.IMPL_NAMES[i]
+        )
+        for i in ("torchvision", "numpy_allpairs", "opencv")
+    ] + [
+        Patch(color="#999999", alpha=0.3, label="shaded: median to p99"),
+        Line2D([], [], color=fs.BLOCK, lw=2.5, label=fs.BLOCK_LABEL),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=7.5)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.9))
     png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(png, facecolor=SURFACE)
+    fig.savefig(png, facecolor=fs.SURFACE)
+    plt.close(fig)
 
 
 def main() -> None:

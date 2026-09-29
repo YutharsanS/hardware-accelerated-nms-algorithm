@@ -17,6 +17,9 @@ Device totals for `xc7a35tcpg236-1`: **20,800 LUT, 41,600 FF, 90 DSP**.
 
 Reports for the last run of each module land in `build/synth/<module>/`.
 
+The comparison with software NMS (laptop, Raspberry Pi 4, idle and under load) is collected in
+[benchmarks.md](benchmarks.md); §6–8 below hold the source figures.
+
 > **Method correction (2026-09-24).** Before this date `synth.tcl` set only `create_clock`, so
 > input-port → register and register → output-port paths were *unconstrained* and left out of
 > WNS. That excluded `iou_lane`'s whole stage 1 and `bitonic32`'s first and last segments. The

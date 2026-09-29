@@ -150,69 +150,136 @@ def check(
     return ok, lines
 
 
-def plot(window: Window, png: Path, expected: int = p.latency_cycles()) -> None:
-    """Draw one window as a digital waveform, marking ``start`` to ``done``.
+SIGNAL_NOTES = {
+    "start": "frame_rx asks the core to begin (one-cycle pulse)",
+    "done": "the core's result is ready (one-cycle pulse)",
+    "busy": "the core is computing",
+    "settled": "all 32 records and areas are in the store (high throughout: they "
+    "arrived over the UART milliseconds earlier)",
+    "we": "a record is being written (low throughout: no writes while computing)",
+}
+
+
+def plot(
+    window: Window, png: Path, expected: int = p.latency_cycles(), windows: int = 1
+) -> None:
+    """Draw one window as a labelled digital waveform, marking ``start`` to ``done``.
+
+    Every trace is named and explained on the figure; the two edges that define T are
+    labelled where they happen, and ``busy``'s span is measured in place.
 
     Args:
         window: The window to draw.
         png: Output path.
         expected: T, for the annotation.
+        windows: How many windows the capture held, for the subtitle.
     """
     import matplotlib as mpl
 
     mpl.use("Agg")
     import matplotlib.pyplot as plt
 
-    ink, muted, surface, accent = "#0b0b0b", "#52514e", "#fcfcfb", "#2a78d6"
+    from benchmarks import figstyle as fs
+
     names = list(SIGNALS)
     n = len(window.samples["start"])
-    fig, ax = plt.subplots(figsize=(9, 3.4), dpi=150, facecolor=surface)
-    ax.set_facecolor(surface)
-    for row, name in enumerate(reversed(names)):
-        y = [row * 1.5 + 0.9 * v for v in window.samples[name]]
+    high, gap = 0.8, 1.6
+    fig, ax = plt.subplots(figsize=(11, 5.2), dpi=150, facecolor=fs.SURFACE)
+    fs.style_axes(ax, left_spine=False)
+    ax.grid(False)
+    rows = {name: (len(names) - 1 - k) * gap for k, name in enumerate(names)}
+    for name, base in rows.items():
+        emphasis = name in ("start", "done", "busy")
+        color = fs.BLOCK if emphasis else fs.MUTED
+        ax.axhline(
+            base, color=fs.GRID, lw=0.8, zorder=0
+        )  # the low level, for reference
         ax.step(
             range(n),
-            y,
+            [base + high * v for v in window.samples[name]],
             where="post",
-            color=accent if name in ("start", "done") else ink,
-            lw=1.6,
+            color=color,
+            lw=2.2 if emphasis else 1.6,
         )
         ax.text(
-            -2, row * 1.5 + 0.35, name, ha="right", va="center", color=ink, fontsize=9
+            -2,
+            base + high / 2,
+            name,
+            ha="right",
+            va="center",
+            color=fs.INK,
+            fontsize=10,
+            weight="bold",
+            family="monospace",
+        )
+        ax.text(
+            n + 1,
+            base + high / 2,
+            SIGNAL_NOTES[name],
+            ha="left",
+            va="center",
+            color=fs.MUTED,
+            fontsize=8,
+            wrap=True,
         )
     s = window.first("start")
     d = window.first("done", after=s or 0)
     if s is not None and d is not None:
-        top = len(names) * 1.5
-        for x in (s, d):
-            ax.axvline(x, color=muted, lw=0.8, ls=(0, (3, 3)))
+        top = rows["start"] + high + 0.9
+        for x, text in (
+            (s, f"start sampled\n(sample {s}: cycle 0)"),
+            (d, f"done first seen\n(sample {d}: {d - s} cycles later)"),
+        ):
+            ax.vlines(x, -0.5, top - 0.05, color=fs.MUTED, lw=0.9, ls=":", zorder=1)
+            ax.text(
+                x, top + 0.35, text, ha="center", va="bottom", color=fs.INK, fontsize=8
+            )
         ax.annotate(
-            "", (d, top), (s, top), arrowprops={"arrowstyle": "<->", "color": ink}
+            "",
+            xy=(d, top),
+            xytext=(s, top),
+            arrowprops={"arrowstyle": "<->", "color": fs.INK, "lw": 1.2},
         )
         ax.text(
             (s + d) / 2,
-            top + 0.15,
-            f"{d - s} cycles = {(d - s) * 10} ns (expected {expected})",
+            top + 0.12,
+            f"T = {d - s} cycles = {(d - s) * 10} ns",
             ha="center",
-            color=ink,
-            fontsize=9,
+            va="bottom",
+            color=fs.INK,
+            fontsize=10,
+            weight="bold",
+            bbox={"boxstyle": "round,pad=0.3", "fc": fs.SURFACE, "ec": fs.BLOCK},
         )
-    ax.set_xlim(-1, n)
-    ax.set_ylim(-0.4, len(names) * 1.5 + 0.8)
+        busy_y = rows["busy"] + high + 0.18
+        ax.text(
+            (s + d) / 2,
+            busy_y,
+            f"busy for {window.busy_cycles()} cycles",
+            ha="center",
+            va="bottom",
+            color=fs.INK,
+            fontsize=8,
+        )
+    ax.set_xlim(-1, n + 1)
+    ax.set_ylim(-0.5, rows["start"] + high + 2.2)
     ax.set_yticks([])
-    ax.set_xlabel("ILA sample (one per 100 MHz clock edge)", color=ink)
-    ax.set_title(
-        "nms_top on the Basys 3: start to done, captured by the ILA",
-        color=ink,
-        loc="left",
-        fontsize=10,
+    ax.set_xlabel(
+        "ILA sample number: one sample per 100 MHz clock edge, so one sample = "
+        "one cycle = 10 ns",
+        color=fs.INK,
+        fontsize=9,
     )
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.tick_params(colors=muted)
-    fig.tight_layout()
+    fs.titles(
+        fig,
+        f"T measured on silicon: start to done in {expected} cycles, every batch",
+        f"Basys 3 (Artix-7 XC7A35T), 100 MHz, debug build with an on-chip logic analyser "
+        f"(ILA). One of {windows} captured windows, each a different random batch; "
+        f"all {windows} measure {expected}.",
+    )
+    fig.tight_layout(rect=(0, 0, 0.74, 0.9))
     png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(png, facecolor=surface)
+    fig.savefig(png, facecolor=fs.SURFACE)
     plt.close(fig)
 
 
@@ -242,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     if args.png and windows:
-        plot(windows[0], args.png)
+        plot(windows[0], args.png, windows=len(windows))
         print(f"wrote {args.png}")
     return 0 if ok else 1
 
