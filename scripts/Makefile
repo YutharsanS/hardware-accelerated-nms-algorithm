@@ -7,7 +7,6 @@
 #   make test-full       the same checks at full volume (~12 min): run before merging
 #                        anything that touches the datapath
 #   make tb_cas          one testbench (analyse, elaborate, run); add FULL=1 for its full sweep
-#   make tb_hello        toolchain smoke test on the pre-existing hello_tb.vhdl
 #   make lint            ruff check + format check on the Python models
 #   make synth MOD=cas   Vivado out-of-context synthesis + implementation of one module
 #                        (PART=<part> for another device, e.g. xc7z020clg400-1)
@@ -138,11 +137,11 @@ PYTHON = uv run
 PYLINT_SRC   = models benchmarks
 PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs) benchmarks
 
-.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host bench bench-report ila parts
+.PHONY: all test test-full lint clean help $(TB_ALL) synth xsim impl program host bench bench-report ila parts
 .DEFAULT_GOAL := help
 
 help:
-	@echo "targets: test | test-full | lint | tb_hello | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
+	@echo "targets: test | test-full | lint | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
 
 $(WORKDIR):
 	@mkdir -p $(WORKDIR)
@@ -187,15 +186,6 @@ $(TB_ALL): analyse
 	   echo "  $(GHDL) -r $(GHDL_FLAGS) $@ $$cfg $(RUNFLAGS)"; \
 	   $(GHDL) -r $(GHDL_FLAGS) $@ $$cfg $(RUNFLAGS) || exit 1; \
 	 done
-
-# Toolchain smoke test. hello_tb.vhdl predates this project layout and lives at the
-# repository root. It drives `clk <= not clk after 5 ns` as a free-running concurrent
-# assignment and its process ends in `wait`, so it generates events forever and will
-# NOT terminate on its own -- hence the explicit, short --stop-time here.
-tb_hello: | $(WORKDIR)
-	$(GHDL) -a $(GHDL_FLAGS) $(WARN) hello_tb.vhdl
-	$(GHDL) -e $(GHDL_FLAGS) $(WARN) hello_tb
-	$(GHDL) -r $(GHDL_FLAGS) hello_tb --stop-time=100ns
 
 # --- Vivado ------------------------------------------------------------------------
 
@@ -311,9 +301,9 @@ synth:
 # --- Aggregate ---------------------------------------------------------------------
 
 # The standing regression: fast, no Vivado, re-run after every step.
-test: lint pytest tb_hello $(TB_ALL)
+test: lint pytest $(TB_ALL)
 	@echo
-	@echo "ALL GATES PASSED  (python + $(words $(TB_ALL)) vhdl testbench(es) + toolchain smoke test)$(if $(FULL),  [FULL tier])"
+	@echo "ALL GATES PASSED  (python + $(words $(TB_ALL)) vhdl testbench(es))$(if $(FULL),  [FULL tier])"
 
 # The full volumes: see "TWO TIERS" above.
 test-full:

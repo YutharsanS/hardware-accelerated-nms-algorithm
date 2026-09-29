@@ -52,7 +52,7 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --all-groups
 
-      # lint + pytest + every VHDL testbench + the toolchain smoke test. The Makefile
+      # lint + pytest + every VHDL testbench. The Makefile
       # already fails the build on any GHDL warning (--warn-error), so a new warning
       # stops CI as well.
       - name: Run the standing regression

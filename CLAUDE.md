@@ -25,7 +25,7 @@ This repo defines shared Claude Code skills under `.claude/skills/` so agentic c
 ## Conventions
 
 - Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`), enforced via the `/commit` and `/pr` skills above.
-- VHDL testbenches are self-checking (see the `report`/`assert` pattern in `hello_tb.vhdl`) rather than relying solely on manual waveform inspection.
+- VHDL testbenches are self-checking (see the `report`/`assert` pattern in `test/tb_cas.vhd`) rather than relying solely on manual waveform inspection.
 - For the golden model development, python is choosen with `uv` tooling. Follows `Google` code conventions and for formatting and linting `ruff` is used.
 
 # Project Configuration
