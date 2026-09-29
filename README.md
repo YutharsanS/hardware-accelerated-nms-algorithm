@@ -343,7 +343,7 @@ src/components/     datapath and link blocks: nms_pkg, cas, bitonic32, iou_lane,
 src/pipeline/       integration: nms_core (the compute core), nms_top (the board top)
 test/               self-checking VHDL testbenches, tb_ prefixed
 models/nms/         golden model, frozen constants, vectors, wire format, host program, pytest
-models/gs/          3D Gaussian Splatting analysis: future work (Phase 0, measured)
+explorations/       side studies: the Phase 0 3D Gaussian Splatting measurements
 models/data/        committed test vectors; random/ is generated and gitignored
 scripts/            Makefile (the root Makefile includes it), synth.tcl, impl.tcl, program.tcl
 deployment/         basys3.xdc
@@ -359,7 +359,7 @@ docs/               see below
 | [docs/build_log.md](docs/build_log.md) | one entry per step: what was built, measured, and what failed on the way |
 | [docs/development_guide.md](docs/development_guide.md) | GHDL/GTKWave background, `uv` and `nbstripout` setup |
 | [docs/NMS.md](docs/NMS.md) | narrative introduction to the algorithm |
-| [docs/phase0_findings.md](docs/phase0_findings.md) | the 3DGS measurements behind the future-work path |
+| [explorations/gaussian_splatting/](explorations/gaussian_splatting/README.md) | the 3DGS measurements behind the future-work path |
 | [docs/README.md](docs/README.md) | repository structure and the `/commit` · `/pr` Claude Code skills |
 
 > The manual GHDL walkthrough in `development_guide.md` predates `scripts/Makefile`. Treat

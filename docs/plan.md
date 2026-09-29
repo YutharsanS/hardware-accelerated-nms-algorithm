@@ -3,7 +3,7 @@
 ## Direction — decided 2026-09-24: the project is the NMS accelerator
 
 An earlier revision of this plan proposed pivoting to a 3D Gaussian Splatting depth sorter and put
-the NMS design on hold. The Part 0 exploration was run ([phase0_findings.md](phase0_findings.md))
+the NMS design on hold. The Part 0 exploration was run ([explorations/gaussian_splatting](../explorations/gaussian_splatting/README.md))
 and **the team decided to stay with NMS.** Everything from "The NMS design" onward is the live plan.
 The 3DGS results go into the report as **future work**. The sorter half of this design — `cas`,
 `bitonic32`, `PIPE_CUTS`, tie-breaking by index, the verification discipline — carries over to a
@@ -69,7 +69,7 @@ suspect the licence tier before the install (see A0).
 
 ## Part 0 — 3DGS exploration (completed; future work)
 
-Run on the Tanks & Temples `train` scene; full results in [phase0_findings.md](phase0_findings.md).
+Run on the Tanks & Temples `train` scene; full results in [explorations/gaussian_splatting](../explorations/gaussian_splatting/README.md).
 In short:
 
 - the 3DGS sort is a genuine bottleneck (CPU 504–662 ms against a 33 ms budget);

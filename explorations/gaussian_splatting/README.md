@@ -1,8 +1,13 @@
 # Phase 0 findings — is 3DGS depth sorting a real problem, and can this board host it?
 
+> **An exploration, not part of the NMS accelerator.** This was the project's Phase 0. It
+> measured 3D Gaussian Splatting's depth sort as a candidate workload before the team chose
+> NMS ([plan.md](../../docs/plan.md), "Direction"). It is kept as the evidence for that
+> decision and as future work.
+
 Measured on the Tanks & Temples **`train`** scene (1,074,761 Gaussians, SH degree 3,
 `iteration_30000`) at 1920×1080 with 16×16 tiles, on an i5-13500H. All code under
-[`models/gs/`](../models/gs/); reproduce with the commands in [Reproducing](#reproducing).
+this directory; reproduce with the commands in [Reproducing](#reproducing).
 
 ## Verdict
 
@@ -189,10 +194,9 @@ but it should be checked against the paper's reported figures before being relie
 ## Reproducing
 
 ```bash
-python -c "
-import sys; sys.path.insert(0,'models')
-from gs import load_ply as lp, project as pj, cameras as cm, tile_stats as ts, sort_cost as sc, early_term as et
-s = lp.load_gaussians('models/data/scenes/train_30k.ply')
+uv run python -c "
+from explorations.gaussian_splatting import load_ply as lp, project as pj, cameras as cm, tile_stats as ts, sort_cost as sc, early_term as et
+s = lp.load_gaussians('explorations/gaussian_splatting/data/train_30k.ply')
 cam = cm.orbit(cm.robust_core(s.means, quantile=0.7), n_views=1, elevations_deg=(0.0,))[0]
 sp, inst = pj.preprocess(s, cam)
 print(ts.format_report(ts.per_frame_stats(inst, cam)))
@@ -205,6 +209,7 @@ The scene is not committed (267 MB, gitignored). Fetch it from
 [Voxel51/gaussian_splatting](https://huggingface.co/datasets/Voxel51/gaussian_splatting):
 
 ```bash
-curl -L -o models/data/scenes/train_30k.ply \
+mkdir -p explorations/gaussian_splatting/data
+curl -L -o explorations/gaussian_splatting/data/train_30k.ply \
   "https://huggingface.co/datasets/Voxel51/gaussian_splatting/resolve/main/FO_dataset/train/point_cloud/iteration_30000/point_cloud.ply"
 ```

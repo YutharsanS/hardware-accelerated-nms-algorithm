@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Only needed to save rendered images in models/gs/render.py.
+# Only needed to save rendered images in explorations/gaussian_splatting/render.py.
 render = ["pillow>=10.0"]
 # Phase E benchmarks (python -m benchmarks, make bench): the libraries edge pipelines call.
 # Optional, so CI (uv sync --all-groups) stays light; tests that need them skip.

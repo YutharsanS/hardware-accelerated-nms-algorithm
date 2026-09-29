@@ -48,7 +48,7 @@ def robust_core(
     rather than the subject and drops the workload to 3.4 M instances at 3.4 per splat.
     At 0.7 the radius is 4 units, the camera sits 7 units back, and the result is 13.4 M
     instances at 18.1 per splat -- inside the 5-20 range reported for real captures. See
-    ``docs/phase0_findings.md`` for the full framing sensitivity table.
+    ``explorations/gaussian_splatting/README.md`` for the full framing sensitivity table.
 
     Args:
         means: ``(N, 3)`` Gaussian centres.

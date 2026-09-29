@@ -132,8 +132,8 @@ PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the
 # 267 MB .ply under models/data is not a concern). Formatting is enforced only on .py
 # sources: reformatting notebook cells is churn that fights nbstripout for no benefit.
-PYLINT_SRC   = models benchmarks
-PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs) benchmarks
+PYLINT_SRC   = models benchmarks explorations
+PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks explorations
 
 .PHONY: all test test-full lint clean help $(TB_ALL) synth xsim impl program host bench bench-report ila
 .DEFAULT_GOAL := help
