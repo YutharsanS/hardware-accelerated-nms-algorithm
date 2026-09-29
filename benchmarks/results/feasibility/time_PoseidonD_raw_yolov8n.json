@@ -1,0 +1,22 @@
+{
+  "host": "PoseidonD",
+  "date": "2026-09-28",
+  "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+  "board": "",
+  "affinity": [
+    2
+  ],
+  "commit": "ca131e5",
+  "python": "3.12.3",
+  "numpy": "2.5.2",
+  "torch": "2.14.0+cpu",
+  "torchvision": "0.29.0+cpu",
+  "opencv": "5.0.0",
+  "governor": "powersave",
+  "freq_khz": "3800038",
+  "vc_temp": "",
+  "vc_clock": "",
+  "vc_throttled": "",
+  "vc_throttled_after": "",
+  "vc_temp_after": ""
+}

@@ -1,0 +1,68 @@
+{
+  "host": "raspberrypi",
+  "label": "Raspberry Pi 4 Model B Rev 1.5",
+  "date": "2026-09-29",
+  "cpu": "aarch64",
+  "board": "Raspberry Pi 4 Model B Rev 1.5",
+  "machine": "aarch64",
+  "affinity": [
+    2
+  ],
+  "commit": "f8973e4",
+  "dirty": false,
+  "python": "3.13.5",
+  "numpy": "2.5.2",
+  "torch": "2.14.0+cpu",
+  "torchvision": "0.29.0+cpu",
+  "opencv-python-headless": "5.0.0.93",
+  "ultralytics": "8.4.165",
+  "governor": "performance",
+  "freq_khz": "1800000",
+  "max_freq_khz": "1800000",
+  "vc_temp": "temp=61.3'C",
+  "vc_clock": "frequency(48)=1800404352",
+  "vc_throttled": "throttled=0x0",
+  "vc_temp_after": "temp=74.0'C",
+  "vc_clock_after": "frequency(48)=1800404352",
+  "vc_throttled_after": "throttled=0x0",
+  "valid": true,
+  "target": "cpu",
+  "load": "pipeline",
+  "argv": [
+    "--target",
+    "cpu",
+    "--load",
+    "pipeline",
+    "--port",
+    "/dev/ttyUSB1",
+    "--cases",
+    "hostile",
+    "--frames",
+    "100"
+  ],
+  "skipped": [],
+  "impl_notes": {
+    "integer_sequential": {},
+    "integer_allpairs": {},
+    "numpy_allpairs": {},
+    "c_scalar": {
+      "flags": "-O3 -mcpu=native",
+      "compiler": "cc (Debian 14.2.0-19) 14.2.0",
+      "timer_overhead_ns": "37"
+    },
+    "torchvision": {
+      "threads": "1"
+    },
+    "opencv": {
+      "threads": "1"
+    }
+  },
+  "spec_vs_strict": {
+    "hostile": 199
+  },
+  "load_weights": "yolov8n.pt",
+  "load_frames": 601,
+  "load_detector_threads": 4,
+  "load_threads_on_every_cpu": 6,
+  "load_setup_s": 2.1
+}
