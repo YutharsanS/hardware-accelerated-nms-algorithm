@@ -51,8 +51,10 @@ if {$ila eq ""} {
 set_property CONTROL.WINDOW_COUNT     $windows $ila
 set_property CONTROL.DATA_DEPTH       $depth   $ila
 set_property CONTROL.TRIGGER_POSITION $pretrig $ila
-set_property CONTROL.TRIGGER_MODE     BASIC_ONLY $ila
-set_property CONTROL.TRIGGER_CONDITION AND $ila
+# No TRIGGER_MODE: the core is built without advanced triggering (C_ADV_TRIGGER false in
+# impl.tcl), so it is fixed at basic mode and the property is read-only. With a single
+# trigger probe the AND/OR condition makes no difference, so don't fail on it either.
+catch {set_property CONTROL.TRIGGER_CONDITION AND $ila}
 # `start` is probe0 in nms_top; Vivado names it after its net, or else probe0.
 set trig [get_hw_probes -quiet -of_objects $ila -filter {NAME =~ *start*}]
 if {$trig eq ""} {
@@ -68,8 +70,11 @@ run_hw_ila $ila
 # The host must not start before the ILA is armed; run_hw_ila returns once it is.
 puts "ILA armed: $windows windows of $depth samples, trigger on start rising"
 set host_rc [catch {
-    # Vivado's launcher puts its own libraries on LD_LIBRARY_PATH; keep them from Python.
-    exec env -u LD_LIBRARY_PATH uv run python -m models.nms.host --port $port \
+    # Vivado's launcher points LD_LIBRARY_PATH, PYTHONHOME and PYTHONPATH at its own bundled
+    # libraries and Python 3.13; with those set, the project's Python can't find its own
+    # standard library. Run the host without them.
+    exec env -u LD_LIBRARY_PATH -u PYTHONHOME -u PYTHONPATH \
+        uv run python -m models.nms.host --port $port \
         --random $windows >@ stdout 2>@ stderr
 } host_msg]
 if {$host_rc} {
