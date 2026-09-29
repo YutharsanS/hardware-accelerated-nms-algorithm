@@ -12,12 +12,13 @@ Also probes thread-pool dispatch cost, because "use more cores" is the obvious o
 to any single-threaded baseline and at N=32 it does not survive contact with the numbers.
 
 Every figure here belongs in the report next to a named processor. An unqualified "faster
-than a CPU" claim is not supportable: see ``docs/build_log.md`` and the plan's Part 1e.
+than a CPU" claim is not supportable: see ``docs/results/benchmarks.md``.
 """
 
 from __future__ import annotations
 
 import platform
+import statistics
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -202,6 +203,56 @@ def _time(fn: Callable[[], int], *, budget_s: float = 0.4) -> tuple[float, int]:
     return (elapsed / max(runs, 1) * 1e6, result)
 
 
+def time_samples(
+    fn: Callable[[int], float],
+    *,
+    budget_s: float = 0.5,
+    min_samples: int = 50,
+    max_samples: int = 5_000,
+) -> list[float]:
+    """Time single calls and keep every sample, for a distribution rather than a mean.
+
+    ``fn(k)`` performs call number ``k`` and returns its own duration in microseconds, so
+    an implementation that times itself -- C, which a Python clock would swamp -- fits the
+    same loop as one timed from Python. Passing ``k`` lets the caller cycle its inputs.
+
+    Args:
+        fn: Performs call ``k`` and returns its duration in microseconds.
+        budget_s: Approximate wall time to spend, once ``min_samples`` are taken.
+        min_samples: Fewest samples to take whatever the budget.
+        max_samples: Most samples to take.
+
+    Returns:
+        Per-call durations in microseconds, in call order.
+    """
+    samples: list[float] = []
+    start = time.perf_counter()
+    while len(samples) < max_samples and (
+        len(samples) < min_samples or time.perf_counter() - start < budget_s
+    ):
+        samples.append(fn(len(samples)))
+    return samples
+
+
+def summarise(samples: list[float]) -> dict[str, float]:
+    """Return min, median, p99 and max: never a mean alone (docs/results/benchmarks.md §3).
+
+    Args:
+        samples: Durations, any unit.
+
+    Returns:
+        ``min``, ``median``, ``p99`` and ``max``, in the unit given.
+    """
+    ordered = sorted(samples)
+    p99 = ordered[min(len(ordered) - 1, round(0.99 * (len(ordered) - 1)))]
+    return {
+        "min": ordered[0],
+        "median": statistics.median(ordered),
+        "p99": p99,
+        "max": ordered[-1],
+    }
+
+
 def cpu_name() -> str:
     """Return a human-readable processor name.
 
@@ -315,7 +366,7 @@ def format_report(timings: list[Timing], *, accelerator_us: float | None = None)
         "     is inherently serial because each keeper depends on all previous ones.",
         "",
         "  Always name the processor class alongside any speedup: this is a 13th-gen",
-        "  laptop CPU. See docs/plan.md Part 1e -- against tuned C/AVX2 the accelerator",
+        "  laptop CPU. See docs/results/benchmarks.md -- against tuned C/AVX2 the accelerator",
         "  is roughly at parity, and end to end over the UART the CPU wins outright.",
     ]
     return "\n".join(lines)
@@ -375,7 +426,7 @@ def format_suite(suite: dict[str, list[Timing]]) -> str:
         "  what a CPU pays for and P parallel lanes get for free -- which is precisely the",
         "  argument for the restructure, quantified.",
         "",
-        "  Always name the processor class alongside any speedup. See docs/plan.md Part 1e:",
+        "  Always name the processor class alongside any speedup. See docs/results/benchmarks.md:",
         "  against tuned C/AVX2 the accelerator is roughly at parity, and end to end over",
         "  the UART the CPU wins outright.",
     ]

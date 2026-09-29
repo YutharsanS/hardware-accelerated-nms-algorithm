@@ -157,7 +157,7 @@ begin
 
         assert LATENCY_CYCLES = 80
             report "latency at P_DEFAULT is " & integer'image(LATENCY_CYCLES)
-                 & " cycles, not the 80 docs/architecture.md states"
+                 & " cycles, not the 80 docs/design/architecture.md states"
             severity error;
         assert N mod P_DEFAULT = 0
             report "P_DEFAULT does not divide N, so a lane would own a partial column"

@@ -1,7 +1,7 @@
-"""B2.1 gate: the VHDL and Python constants must not drift apart.
+"""The VHDL and Python constants must not drift apart.
 
 ``src/components/nms_pkg.vhd`` and ``models/nms/params.py`` both mirror
-``docs/architecture.md``, and a silent disagreement between them would produce hardware
+``docs/design/architecture.md``, and a silent disagreement between them would produce hardware
 that the golden model declares correct. So the comparison is made against **GHDL's own
 evaluation** of the package: ``test/tb_params.vhd`` reports every constant, this module
 runs it and parses those lines. A Python re-implementation of VHDL constant folding was

@@ -1,6 +1,6 @@
 -- uart_rx -- 8N1 receiver, one byte per rx_valid pulse.
 --
--- The RX pin is the design's ONLY asynchronous input (docs/architecture.md section 10), so
+-- The RX pin is the design's ONLY asynchronous input (docs/design/architecture.md section 10), so
 -- the 2-flop synchroniser lives here, in front of everything, rather than being left to
 -- whoever instantiates this. Nothing downstream ever sees the raw pin.
 --

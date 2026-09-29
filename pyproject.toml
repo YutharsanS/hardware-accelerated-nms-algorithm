@@ -9,8 +9,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Only needed to save rendered images in models/gs/render.py.
+# Only needed to save rendered images in explorations/gaussian_splatting/render.py.
 render = ["pillow>=10.0"]
+# Benchmarks (python -m benchmarks, make bench): the libraries edge pipelines call.
+# Optional, so CI (uv sync --all-groups) stays light; tests that need them skip.
+bench = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "opencv-python-headless>=4.10",
+    "matplotlib>=3.8",
+]
+# The detector load. Ultralytics and its weights are AGPL-3.0; used only as a benchmark load.
+bench-load = ["ultralytics>=8.3"]
 
 [dependency-groups]
 dev = [
@@ -18,6 +28,17 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.16.4",
 ]
+
+# torch from the CPU-only index on Linux, so `--extra bench` never pulls the multi-GB CUDA
+# build. Its wheels cover both x86_64 (the laptop) and aarch64 (the Pi 5).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [tool.ruff]
 force-exclude = true
@@ -40,6 +61,10 @@ extend-exclude = [
 # host.py is one: it runs as `python -m models.nms.host` and reports to the terminal.
 "**/__main__.py" = ["T201"]
 "models/nms/host.py" = ["T201"]
+# The feasibility scripts are CLI entry points too, reporting to the terminal.
+"benchmarks/feasibility/*.py" = ["T201"]
+"benchmarks/report.py" = ["T201"]
+"benchmarks/onchip_latency.py" = ["T201"]
 
 [tool.ruff.lint]
 extend-select = [

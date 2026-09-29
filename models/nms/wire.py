@@ -1,6 +1,6 @@
 """The host <-> FPGA wire format: one encoder, one decoder, shared by everything.
 
-``docs/architecture.md`` section 3 is normative. Every multi-byte field goes most-significant
+``docs/design/architecture.md`` section 3 is normative. Every multi-byte field goes most-significant
 byte first::
 
     host -> FPGA  A5 5A | 32 records x 8 B | present_mask 4 B | seq 1 B | crc8 1 B   (264 B)

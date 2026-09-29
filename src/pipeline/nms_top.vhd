@@ -14,8 +14,15 @@
 --   * BTNC, debounced: it must read pressed for DEBOUNCE consecutive clocks (10 ms by
 --     default) before it counts, so contact bounce cannot produce a train of resets.
 --
--- LEDs (plan.md O4): the low 16 bits of the last keep_mask -- a visual check with no host
+-- LEDs: the low 16 bits of the last keep_mask -- a visual check with no host
 -- attached. keep_mask is held until the next batch starts, and cleared by reset.
+--
+-- ILA (debug builds only, `make impl ILA=1`): an Integrated Logic Analyzer watching the
+-- frame_rx <-> nms_core handshake, to capture T on silicon (docs/user_guide.md §8). It only
+-- watches; nothing it does reaches the datapath or the wire. With the default ILA = false
+-- the generate below is empty and the netlist is exactly the production one. The core
+-- `ila_core` is generated from Vivado's IP catalogue by scripts/impl.tcl, because the BASIC
+-- licence refuses post-synthesis debug-core insertion but allows the catalogue IP.
 --
 -- VHDL-93 subset; combinational logic as concurrent assignments, processes clocked only.
 
@@ -32,7 +39,8 @@ entity nms_top is
         POR_CYCLES : positive := 16;
         P          : positive := work.nms_pkg.P_DEFAULT;
         PIPE_CUTS  : natural  := work.nms_pkg.PIPE_CUTS;
-        ISSUE_REGS : natural  := work.nms_pkg.ISSUE_REGS
+        ISSUE_REGS : natural  := work.nms_pkg.ISSUE_REGS;
+        ILA        : boolean  := false                   -- debug builds only, see above
     );
     port (
         clk  : in  std_logic;                         -- W5, 100 MHz
@@ -83,6 +91,19 @@ architecture rtl of nms_top is
     signal tx_start : std_logic;
     signal tx_data  : std_logic_vector(7 downto 0);
     signal tx_busy  : std_logic;
+
+    -- Vivado's ILA IP, as scripts/impl.tcl generates it: five 1-bit probes. Bound only when
+    -- ILA = true; with the default no instance exists, so no entity is needed.
+    component ila_core
+        port (
+            clk    : in std_logic;
+            probe0 : in std_logic_vector(0 downto 0);
+            probe1 : in std_logic_vector(0 downto 0);
+            probe2 : in std_logic_vector(0 downto 0);
+            probe3 : in std_logic_vector(0 downto 0);
+            probe4 : in std_logic_vector(0 downto 0)
+        );
+    end component;
 
 begin
 
@@ -157,5 +178,20 @@ begin
                   tx_busy => tx_busy, tx => RsTx);
 
     led <= keep_mask(15 downto 0);
+
+    -- --- debug only -----------------------------------------------------------------
+
+    -- Probe order is fixed: benchmarks/onchip_latency.py reads probe0..4 as these names.
+    ila_gen : if ILA generate
+        ila_i : ila_core
+            port map (
+                clk       => clk,
+                probe0(0) => start,
+                probe1(0) => done,
+                probe2(0) => busy,
+                probe3(0) => settled,
+                probe4(0) => we
+            );
+    end generate ila_gen;
 
 end architecture rtl;

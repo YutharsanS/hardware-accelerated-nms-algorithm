@@ -1,6 +1,6 @@
 -- nms_ctrl -- the all-pairs control FSM: rank-ordered row fill, resolve trailing by L+2.
 --
--- The design, with the cycle-level timeline this file implements, is docs/fsm_design.md.
+-- The design, with the cycle-level timeline this file implements, is docs/design/fsm_design.md.
 -- In brief:
 --
 --   IDLE --start--> SORT (C) --> FILL (N*G) --> DRAIN (L+1) --> DONE (1) --> IDLE
@@ -164,7 +164,7 @@ begin
     -- --- resolve --------------------------------------------------------------------
     --
     -- The whole row is applied, earlier ranks and the diagonal included: every resolved
-    -- slot's valid bit is already clear, so those bits are no-ops (plan.md P10).
+    -- slot's valid bit is already clear, so those bits are no-ops (the keeper-barrier invariant).
 
     self_bit   <= onehot(row_idx);
     kept       <= valid_mask(to_integer(row_idx));
@@ -300,7 +300,7 @@ begin
                 severity warning;
             assert (valid_mask and resolved_sim) = (valid_mask'range => '0')
                 report "nms_ctrl: an already-resolved slot is still valid, so applying a "
-                     & "whole row is no longer a no-op on earlier ranks (plan.md P10)"
+                     & "whole row is no longer a no-op on earlier ranks (keeper-barrier invariant)"
                 severity error;
         end if;
     end process regs;

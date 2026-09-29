@@ -12,9 +12,17 @@
 -- the last one's store, sorter and row buffer.
 --
 -- Per batch:
---   * write the 32 records through the write port, then wait for `settled`
---   * pulse start, and pin the latency as an EQUALITY: done is '0' after edge T-2 and '1'
---     after edge T-1, with T computed from the generics, including ISSUE_REGS
+--   * write the 32 records on 32 consecutive edges, one per cycle
+--   * pin the settle as an EQUALITY: `settled` is '0' after the last write edge (its area is
+--     still in the multiplier) and '1' one edge later, so SETTLE = 1 cycle
+--   * pulse start on the first cycle it is allowed, and pin the latency as an EQUALITY: done
+--     is '0' after edge T-2 and '1' after edge T-1, with T computed from the generics,
+--     including ISSUE_REGS
+--
+-- Together these make the block's full latency an equality too, from the first record in
+-- to done:  T_FULL = N (load) + SETTLE + T = 32 + 1 + 80 = 113 cycles at the shipped
+-- generics. That is the figure a software NMS call is compared with
+-- (docs/results/benchmarks.md §2), not T alone.
 --   * keep_mask = expected, status = OK, and back in IDLE one edge later
 --
 -- Nothing here is stubbed. Where tb_nms_ctrl replays the lanes from traces, this drives
@@ -45,6 +53,10 @@ end entity tb_nms_core;
 architecture sim of tb_nms_core is
 
     constant T : positive := N * N / P + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2;
+
+    -- box_store computes each area one edge after its record lands
+    constant SETTLE : positive := 1;
+    constant T_FULL : positive := N + SETTLE + T;
 
     constant MIN_CASES  : natural := 20;
 
@@ -136,10 +148,24 @@ begin
                 wait for 1 ns;
             end loop;
             we <= '0';
-            wait until rising_edge(clk);
-            wait for 1 ns;
+            assert settled = '0'
+                report tag & ": settled straight after the last write; the last area "
+                     & "should still be in flight (SETTLE = " & integer'image(SETTLE) & ")"
+                severity error;
+            for e in 1 to SETTLE loop
+                wait until rising_edge(clk);
+                wait for 1 ns;
+                if e < SETTLE then
+                    assert settled = '0'
+                        report tag & ": settled after " & integer'image(e) & " edges; "
+                             & "faster than SETTLE = " & integer'image(SETTLE)
+                        severity error;
+                end if;
+            end loop;
             assert settled = '1' and busy = '0'
-                report tag & ": not settled and idle before start" severity error;
+                report tag & ": not settled and idle " & integer'image(SETTLE)
+                     & " edge(s) after the last write; slower than SETTLE"
+                severity error;
 
             present_mask <= pm;
             start        <= '1';
@@ -286,7 +312,9 @@ begin
              & integer'image(PIPE_CUTS) & ", ISSUE_REGS = " & integer'image(ISSUE_REGS)
              & ": " & integer'image(curated) & " curated + " & integer'image(randoms)
              & " random batches bit-exact, latency T = " & integer'image(T)
-             & " pinned both sides every batch (" & integer'image(survivors)
+             & " and settle = " & integer'image(SETTLE)
+             & " pinned both sides every batch, so first record to done = "
+             & integer'image(T_FULL) & " cycles (" & integer'image(survivors)
              & " survivors, " & integer'image(nonfull) & " batches with absent slots)";
         report "PASS";
         running <= false;

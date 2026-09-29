@@ -10,7 +10,7 @@
 --
 -- OUTPUT IS ASCENDING. The rank table therefore reads it reversed --
 -- index_table(r) = idx(keys_out(N-1-r)) -- because rank 0 is the highest key. Getting
--- that backwards is the wiring error B5.2 instantiates the real sorter to catch.
+-- that backwards is the wiring error the sorter testbench instantiates the real network to catch.
 --
 -- Only {score, index} traverses the network: KEY_W = 21 bits, not the 64-bit record.
 -- Routing full payloads would cost 17,280 LUT (83% of the device) against 7,200, which is
@@ -20,7 +20,7 @@
 -- PIPE_CUTS cycles and PIPE_CUTS = 0 is purely combinational. Cut positions are spread
 -- evenly by sub-stage count, which is *not* the same as evenly by delay -- the jj = 16
 -- sub-stages route across the whole array while the jj = 1 sub-stages are local. That is
--- the known weak point (docs/plan.md P1), so CUT_AFTER exists to override the placement
+-- the known weak point (docs/results/hardware.md §2), so CUT_AFTER exists to override the placement
 -- with positions taken from a real timing report without touching this file.
 --
 -- No reset port, deliberately. This is a pure feed-forward pipeline with no state that
@@ -123,7 +123,7 @@ architecture rtl of bitonic32 is
 
     -- Where the register cuts go. An explicit CUT_AFTER wins; otherwise spread PIPE_CUTS
     -- cuts evenly by sub-stage count, cut c landing after ceil((c+1)*SUBSTAGES/(CUTS+1)).
-    -- At PIPE_CUTS = 2 that is after sub-stages 5 and 10, as docs/architecture.md states.
+    -- At PIPE_CUTS = 2 that is after sub-stages 5 and 10, as docs/design/architecture.md states.
     function build_cuts return std_logic_vector is
         variable m : std_logic_vector(1 to SORT_SUBSTAGES) := (others => '0');
     begin

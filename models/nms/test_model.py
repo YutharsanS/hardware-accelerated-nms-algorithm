@@ -1,4 +1,4 @@
-"""B1.2 gate: the integer model reproduces the anchor and both forms agree everywhere."""
+"""The integer model reproduces the anchor, and both forms agree everywhere."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from models.nms import batches, model
 from models.nms import params as p
 
 REPO = Path(__file__).resolve().parents[2]
-# The model-versus-model sweep. 20,000 batches is the plan's figure and takes ~45 s, so it
+# The model-versus-model sweep. 20,000 batches is the full figure and takes ~45 s, so it
 # runs under `make test-full` (NMS_FULL=1); `make test`, which CI runs, uses 2,000.
 AGREEMENT_BATCHES = 20_000 if os.environ.get("NMS_FULL") else 2_000
 
@@ -41,7 +41,7 @@ def test_embedded_notebook_set_matches_the_notebook() -> None:
         "".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"
     )
     scope: dict[str, object] = {}
-    # B1.5 rewired the notebook onto models/nms/model.py, and it now executes cleanly, so
+    # The notebook was rewired onto models/nms/model.py, and it now executes cleanly, so
     # this deliberately does NOT suppress exceptions -- a notebook that raises is a failure.
     # Before that it ended in bare expressions that raised outside Jupyter.
     exec(code, scope)  # noqa: S102 - the notebook is repository content
@@ -269,7 +269,7 @@ def test_trace_shows_rows_applied_to_earlier_ranks_are_no_ops() -> None:
 
 
 def test_union_is_bounded_by_the_image_not_by_twice_a_box() -> None:
-    # docs/architecture.md gives max U as 2*COORD_MAX**2 = 33,538,050, needing 25 bits.
+    # docs/design/architecture.md gives max U as 2*COORD_MAX**2 = 33,538,050, needing 25 bits.
     # That is a correct *safe* bound but not a tight one: U = |A| + |B| - |A and B| is the
     # area of the geometric union, and both boxes live inside the same 4096x4096 space, so
     # U can never exceed COORD_MAX**2 = 16,769,025, which fits 24 bits.

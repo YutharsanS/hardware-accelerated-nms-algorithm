@@ -1,6 +1,6 @@
 -- nms_pkg -- frozen constants and types for the NMS accelerator.
 --
--- Mirrors docs/architecture.md, which is normative, and models/nms/params.py, which
+-- Mirrors docs/design/architecture.md, which is normative, and models/nms/params.py, which
 -- mirrors the same numbers on the Python side. test/tb_params.vhd reports every constant
 -- below and models/nms/test_params_agree.py fails the build if the two ever diverge.
 --
@@ -99,13 +99,13 @@ package nms_pkg is
 
     -- Register cuts inside the bitonic network; the sort takes exactly this many cycles.
     -- 8 is the lowest swept value that meets 100 MHz after place and route (119.2 MHz,
-    -- docs/results.md section 2); 2 reaches only 53.9 MHz. 0 is purely combinational;
+    -- docs/results/hardware.md section 2); 2 reaches only 53.9 MHz. 0 is purely combinational;
     -- one cut per sub-stage is the finest possible, so this is bounded by SORT_SUBSTAGES.
     constant PIPE_CUTS : natural := 8;
 
     -- Register stages between nms_ctrl's issue and lane stage 1 in nms_core: after the
     -- selects, then after the payload muxes. Without them that path is 14.9 ns in the
-    -- placed core; with 2 it closes 100 MHz (docs/results.md section 5).
+    -- placed core; with 2 it closes 100 MHz (docs/results/hardware.md section 5).
     constant ISSUE_REGS : natural := 2;
 
     -- Exact batch latency of nms_core at P_DEFAULT. An equality, not a bound: no term

@@ -1,6 +1,6 @@
 -- nms_core -- the complete NMS compute core: store, sorter, control, and P IoU lanes.
 --
--- Everything except the wire. D1 wraps this with frame_rx / frame_tx (UART, magic, CRC-8,
+-- Everything except the wire. nms_top wraps this with frame_rx / frame_tx (UART, magic, CRC-8,
 -- seq) to make the board-level top. The interface here is the one frame_rx drives: a record
 -- write port, `start`, and the result.
 --
@@ -12,7 +12,7 @@
 --
 -- ISSUE REGISTERS. The path from nms_ctrl's counter, through the index_table read, the
 -- 32:1 x 72 b row-source mux and into lane stage 1, measures about 16.8 ns in segments
--- (docs/results.md section 5) -- it cannot close 100 MHz in one cycle. ISSUE_REGS inserts
+-- (docs/results/hardware.md section 5) -- it cannot close 100 MHz in one cycle. ISSUE_REGS inserts
 -- registers along it:
 --
 --   0  none                     (functional reference; will not meet timing)
@@ -25,7 +25,7 @@
 --
 --   T = N*N/P + LANE_LATENCY + ISSUE_REGS + PIPE_CUTS + 2       (80 at P = 16, C = 8)
 --
--- Contract with frame_rx (docs/fsm_design.md section 1): no write while busy, and start
+-- Contract with frame_rx (docs/design/fsm_design.md section 1): no write while busy, and start
 -- only when busy = '0' and settled = '1'. Both are asserted in simulation below.
 --
 -- VHDL-93 subset; combinational logic as concurrent assignments, processes clocked only.
