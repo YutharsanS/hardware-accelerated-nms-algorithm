@@ -26,7 +26,8 @@ from pathlib import Path
 
 DEFAULT_WEIGHTS = "yolov8n.pt"
 READY = "ready"
-"""Printed once the first inference is done, so the parent starts timing under load."""
+"""Printed once the first inference is done, so the parent starts timing under load. It is
+the only thing the worker writes to stdout: everything else goes to stderr (see main)."""
 
 
 class Detector:
@@ -79,9 +80,16 @@ def main() -> None:
     args = ap.parse_args()
     if args.cpus:
         os.sched_setaffinity(0, {int(c) for c in args.cpus.split(",")})
+    # Keep stdout for the ready line alone. Ultralytics prints to stdout on first use --
+    # "Creating new Ultralytics Settings file", weight-download progress -- and the parent
+    # reads stdout for READY, so point file descriptor 1 at stderr before anything imports
+    # it. The saved descriptor still reaches the parent.
+    ready_out = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
     detector = Detector(args.weights, args.images)
-    sys.stdout.write(READY + "\n")
-    sys.stdout.flush()
+    ready_out.write(READY + "\n")
+    ready_out.flush()
     while True:
         detector.step()
 

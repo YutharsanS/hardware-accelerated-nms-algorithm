@@ -99,12 +99,22 @@ class Background:
         if self.images:
             self.command += ["--images", str(self.images)]
         self.proc = subprocess.Popen(self.command, stdout=subprocess.PIPE, text=True)
-        line = self.proc.stdout.readline() if self.proc.stdout else ""
-        if line.strip() != detector.READY:
-            self.proc.kill()
-            msg = "the concurrent detector did not start; run `python -m benchmarks.workloads.detector --loop` alone to see why"
-            raise RuntimeError(msg)
-        return self
+        # The worker keeps stdout for READY alone, but skip anything else that arrives first
+        # rather than failing on it. EOF means the worker died; its errors are on stderr.
+        seen: list[str] = []
+        for line in self.proc.stdout or []:
+            if line.strip() == detector.READY:
+                return self
+            seen.append(line.rstrip())
+        self.proc.kill()
+        msg = (
+            "the concurrent detector did not start (its errors are printed above); to run it "
+            "alone: uv run --extra bench --extra bench-load python -m "
+            "benchmarks.workloads.detector --loop"
+        )
+        if seen:
+            msg += "\nits last output: " + " | ".join(seen[-3:])
+        raise RuntimeError(msg)
 
     def __exit__(
         self,
