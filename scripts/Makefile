@@ -10,9 +10,11 @@
 #   make tb_hello        toolchain smoke test on the pre-existing hello_tb.vhdl
 #   make lint            ruff check + format check on the Python models
 #   make synth MOD=cas   Vivado out-of-context synthesis + implementation of one module
+#                        (PART=<part> for another device, e.g. xc7z020clg400-1)
 #   make impl            Vivado implementation of nms_top on the real pins, plus a bitstream
 #   make program         load that bitstream onto a connected Basys 3 over JTAG
 #   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
+#   make parts           nms_core on other FPGA parts, post-route (Fmax, area, T in ns)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
 #   make bench           benchmark NMS against its competitors (docs/plan.md Phase E):
@@ -136,7 +138,7 @@ PYTHON = uv run
 PYLINT_SRC   = models benchmarks
 PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) $(wildcard models/gs) benchmarks
 
-.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host bench bench-report ila
+.PHONY: all test test-full lint clean help $(TB_ALL) tb_hello synth xsim impl program host bench bench-report ila parts
 .DEFAULT_GOAL := help
 
 help:
@@ -290,12 +292,21 @@ HIST ?=
 bench-report:
 	$(PYTHON) $(if $(HIST),--extra bench) python -m benchmarks.report $(if $(HIST),--hist $(HIST))
 
+# The same RTL on other parts, post-route (docs/plan.md Phase E, E7): nms_core on every part
+# in benchmarks/fpga_parts.py at P = 16 and 32, two passes each. About an hour.
+#   make parts [PARTS_ARGS="--parts xc7z020clg400-1 --lanes 16 --jobs 2"]
+PARTS_ARGS ?=
+parts:
+	@command -v vivado >/dev/null 2>&1 || { \
+	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
+	$(PYTHON) python -m benchmarks.fpga_parts $(PARTS_ARGS)
+
 synth:
-	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"]"; exit 1; }
+	@test -n "$(MOD)" || { echo "usage: make synth MOD=<module> [PERIOD=<ns>] [GENERICS=\"G=V ...\"] [PART=<part>] [OUT=<dir>]"; exit 1; }
 	@command -v vivado >/dev/null 2>&1 || { \
 	  echo "vivado not on PATH -- run: source ~/Vivado/2026.1/Vivado/settings64.sh"; exit 1; }
 	vivado -mode batch -nolog -nojournal -source scripts/synth.tcl \
-	  -tclargs $(MOD) $(PERIOD) $(GENERICS)
+	  -tclargs $(MOD) $(PERIOD) $(GENERICS) $(if $(PART),PART=$(PART)) $(if $(OUT),OUT=$(OUT))
 
 # --- Aggregate ---------------------------------------------------------------------
 

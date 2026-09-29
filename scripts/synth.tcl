@@ -2,6 +2,11 @@
 # gates in docs/plan.md (B2.2, B3.2, B4.2).
 #
 #   vivado -mode batch -source scripts/synth.tcl -tclargs <module> [period_ns] [G=V ...]
+#          [PART=<part>] [OUT=<dir>]
+#
+# PART= targets another device (default xc7a35tcpg236-1, the Basys 3), for the same RTL on
+# other parts (docs/plan.md Phase E, E7). OUT= overrides the report directory. Every run
+# also writes summary.json there, which benchmarks/fpga_parts.py collects.
 #
 # Invoked through `make synth MOD=<module>`. Numbers are taken after route_design, not
 # after synth_design: a post-synthesis estimate omits routing delay, and P1 in the plan
@@ -15,16 +20,23 @@ if {$mod eq ""} {
 
 set period 10.0
 set generics {}
+set part   xc7a35tcpg236-1
+set outdir build/synth/$mod
 foreach arg [lrange $argv 1 end] {
-    if {[string match "*=*" $arg]} {
+    if {[string match "PART=*" $arg]} {
+        set part [string range $arg 5 end]
+    } elseif {[string match "OUT=*" $arg]} {
+        set outdir [string range $arg 4 end]
+    } elseif {[string match "*=*" $arg]} {
         lappend generics $arg
     } else {
         set period $arg
     }
 }
-
-set part   xc7a35tcpg236-1
-set outdir build/synth/$mod
+if {[llength [get_parts -quiet $part]] == 0} {
+    puts "no part $part installed"
+    exit 1
+}
 file mkdir $outdir
 
 # Dependency order, mirroring RTL in scripts/Makefile: a unit must be read before
@@ -97,7 +109,7 @@ set util [report_utilization -return_string]
 
 proc util_row {rpt name} {
     foreach line [split $rpt "\n"] {
-        if {[regexp "^\\|\\s*${name}\\s*\\|\\s*(\\d+)\\s*\\|" $line -> v]} {
+        if {[regexp "^\\|\\s*${name}\\s*\\|\\s*([0-9.]+)\\s*\\|" $line -> v]} {
             return $v
         }
     }
@@ -134,3 +146,23 @@ if {$wns ne "n/a"} {
 }
 puts "reports     : $outdir/"
 puts "=================================="
+
+# Machine-readable copy of the above, for benchmarks/fpga_parts.py.
+set dev [get_parts $part]
+set fh [open $outdir/summary.json w]
+puts $fh "\{"
+puts $fh "  \"module\": \"$mod\","
+puts $fh "  \"part\": \"$part\","
+puts $fh "  \"speed\": \"[get_property SPEED $dev]\","
+puts $fh "  \"generics\": \"$generics\","
+puts $fh "  \"period_ns\": $period,"
+puts $fh "  \"lut\": $luts,"
+puts $fh "  \"ff\": $flops,"
+puts $fh "  \"dsp\": $dsps,"
+puts $fh "  \"bram\": $brams,"
+puts $fh "  \"lut_avail\": [get_property LUT_ELEMENTS $dev],"
+puts $fh "  \"ff_avail\": [get_property FLIPFLOPS $dev],"
+puts $fh "  \"dsp_avail\": [get_property DSP $dev],"
+puts $fh "  \"wns_ns\": [expr {$wns eq "n/a" ? "null" : $wns}]"
+puts $fh "\}"
+close $fh
