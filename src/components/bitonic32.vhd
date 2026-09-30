@@ -69,9 +69,11 @@ architecture rtl of bitonic32 is
     -- The (kk, jj) pair belonging to sub-stage s, by walking the schedule. Both are pure
     -- and called only to initialise constants, so they cost nothing at run time.
     function stage_kk (s : substage_range) return natural is
-        variable idx : natural := 0;
-        variable kk  : natural := 2;
-        variable jj  : natural;
+        -- calculates the outer stage size given the substage
+
+        variable idx : natural := 0; -- global substage counter 
+        variable kk  : natural := 2; -- current bitonic merger size
+        variable jj  : natural; -- butterfly stride / comparision offset
     begin
         while kk <= N loop
             jj := kk / 2;
@@ -88,6 +90,7 @@ architecture rtl of bitonic32 is
     end function stage_kk;
 
     function stage_jj (s : substage_range) return natural is
+        -- calculates the butterfly stride comparision length given the substage
         variable idx : natural := 0;
         variable kk  : natural := 2;
         variable jj  : natural;
@@ -109,6 +112,7 @@ architecture rtl of bitonic32 is
     -- Direction per (sub-stage, lane): descending when bit kk of the index is set. jj is
     -- a power of two, so "bit kk of i" is (i / kk) mod 2 -- VHDL-93 has no integer `and`.
     function build_dir return dir_t is
+        -- ensures the lines form valid bitonic merge sequences (000s -> 111s) then only the bitonic sorting is applicable
         variable m : dir_t := (others => (others => '0'));
     begin
         for s in substage_range loop
@@ -137,6 +141,7 @@ architecture rtl of bitonic32 is
     end function build_cuts;
 
     function popcount (v : std_logic_vector) return natural is
+        -- calculates number of 1s in the vector
         variable total : natural := 0;
     begin
         for i in v'range loop
