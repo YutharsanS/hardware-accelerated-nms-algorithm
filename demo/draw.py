@@ -84,7 +84,7 @@ def steps_of(frame: Frame) -> list[Step]:
 
 
 def class_colour(cls: int) -> tuple[int, int, int]:
-    """Return a stable, distinct BGR colour for a class id, never red (red = removed)."""
+    """Return a stable, distinct BGR colour for a class id, never red (red = removed, step view)."""
     hue = 0.12 + 0.76 * ((cls * 0.618034) % 1.0)
     r, g, b = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
     return int(b * 255), int(g * 255), int(r * 255)
@@ -95,19 +95,6 @@ def _pt(
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     x, y, a, b = (round(float(v) * s) for v in box[:4])
     return (x, y), (a, b)
-
-
-def _dashed(img: np.ndarray, p0: tuple[int, int], p1: tuple[int, int]) -> None:
-    (x0, y0), (x1, y1) = p0, p1
-    dash = 6
-    for x in range(x0, x1, 2 * dash):
-        xe = min(x + dash, x1)
-        cv2.line(img, (x, y0), (xe, y0), GREY, 1)
-        cv2.line(img, (x, y1), (xe, y1), GREY, 1)
-    for y in range(y0, y1, 2 * dash):
-        ye = min(y + dash, y1)
-        cv2.line(img, (x0, y), (x0, ye), GREY, 1)
-        cv2.line(img, (x1, y), (x1, ye), GREY, 1)
 
 
 def _label(img: np.ndarray, text: str, org: tuple[int, int], colour: tuple) -> None:
@@ -130,24 +117,13 @@ def left_panel(frame: Frame, s: float) -> np.ndarray:
     img = cv2.resize(frame.image, None, fx=s, fy=s)
     for corners, cls in zip(frame.cands.corners, frame.cands.classes, strict=True):
         cv2.rectangle(img, *_pt(corners, s), class_colour(int(cls)), 1)
-    _title(img, f"Detector output, before NMS: {len(frame.cands.anchors)} boxes")
+    _title(img, f"YOLOv8n output, before NMS: {len(frame.cands.anchors)} boxes")
     return img
 
 
 def right_panel(frame: Frame, s: float, *, simulated: bool) -> np.ndarray:
-    """The boxes the board kept, the ones it removed, and the ones it never saw."""
+    """The boxes the board kept."""
     img = cv2.resize(frame.image, None, fx=s, fy=s)
-    faint = img.copy()
-    over = 0
-    for b, keep in zip(frame.batches, frame.keep_masks, strict=True):
-        for slot in range(b.count):
-            if not (keep >> slot) & 1:
-                cv2.rectangle(faint, *_pt(b.boxes[slot], s), RED, 1)
-        anchors = np.searchsorted(frame.cands.anchors, b.over_cap)
-        for i in anchors:
-            _dashed(img, *_pt(frame.cands.corners[i], s))
-        over += len(b.over_cap)
-    cv2.addWeighted(faint, 0.75, img, 0.25, 0, img)
     for b, keep in zip(frame.batches, frame.keep_masks, strict=True):
         colour = class_colour(b.cls)
         for slot in range(b.count):
@@ -157,11 +133,8 @@ def right_panel(frame: Frame, s: float, *, simulated: bool) -> np.ndarray:
                 cv2.rectangle(img, p0, p1, colour, 3)
                 name = frame.names.get(b.cls, str(b.cls))
                 _label(img, f"{name} {box.score / 65535:.2f}", p0, colour)
-    who = "golden model (SIMULATED)" if simulated else "the FPGA"
-    legend = "red = removed by NMS"
-    if over:
-        legend += f"  |  dashed grey = over 32 per class, not checked ({over})"
-    _title(img, f"After NMS on {who}: {frame.kept} kept", legend)
+    who = "golden model, no board" if simulated else "the FPGA"
+    _title(img, f"After NMS on {who}: {frame.kept} kept")
     return img
 
 
@@ -204,6 +177,14 @@ def step_panel(
         " red = removed now, grey = undecided",
     )
     return img
+
+
+def badge(img: np.ndarray, text: str) -> None:
+    """Stamp a large label at the top centre of the canvas, in place."""
+    (w, h), _ = cv2.getTextSize(text, FONT, 1.2, 3)
+    x, y = (img.shape[1] - w) // 2, 90
+    cv2.rectangle(img, (x - 14, y - h - 14), (x + w + 14, y + 14), BLACK, -1)
+    cv2.putText(img, text, (x, y), FONT, 1.2, WHITE, 3, cv2.LINE_AA)
 
 
 def hud(width: int, lines: list[str]) -> np.ndarray:

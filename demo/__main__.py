@@ -3,7 +3,7 @@
 The FPGA side is the shipped ``nms_top`` bitstream, unchanged. Per video frame::
 
     frame -> YOLOv8n raw head (8,400 anchors, before NMS) -> conf > 0.25, one batch per class,
-    top 32 per class -> board over UART -> keep_mask -> draw kept / removed / not checked
+    top 32 per class -> board over UART -> keep_mask -> draw what was kept
 
 The HUD shows where the time goes and checks every reply against the golden model. It is
 there so the audience does not take the demo as a video speed-up: the board's part is
@@ -21,18 +21,29 @@ Keys: space pauses or resumes, n steps through one frame's NMS decisions box by 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# opencv-python's bundled Qt 5 runs on X11 (XWayland) under GNOME anyway, but prints a warning
+# whenever XDG_SESSION_TYPE says wayland, whatever QT_QPA_PLATFORM is. Qt is the only reader
+# of the variable in this process, so state X11 here; nothing outside the demo sees it.
+if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+    os.environ["XDG_SESSION_TYPE"] = "x11"
+
 import cv2
+
+# Importing cv2 points QT_QPA_FONTDIR at cv2/qt/fonts, which the wheel does not ship, so Qt
+# warns on every window draw. Qt reads the variable when the first window opens, so
+# overriding it here, after the import, takes effect.
+SYSTEM_FONTS = Path("/usr/share/fonts/truetype/dejavu")
+if SYSTEM_FONTS.is_dir():
+    os.environ["QT_QPA_FONTDIR"] = str(SYSTEM_FONTS)
 import numpy as np
-import torch
-import torchvision
 
 from benchmarks.feasibility.count_boxes import IMGSZ, raw_predictions
-from benchmarks.targets.fpga import full_latency_cycles
 from demo import batching, draw
 from models.nms import host, model, wire
 from models.nms import params as p
@@ -62,72 +73,31 @@ class Stats:
     batches: int = 0
     agree: int = 0
     errors: int = 0
-    torch_diff: int = 0
+    over_cap: int = 0
     t_yolo: float = 0.0
     t_uart: float = 0.0
-    t_torch: float = 0.0
     n_batches: int = 0
     fps: float = 0.0
     log: list[str] = field(default_factory=list)
 
-    def lines(self, *, simulated: bool) -> list[str]:
+    def lines(self, *, simulated: bool, paused: bool) -> list[str]:
         """The HUD text."""
-        core_us = full_latency_cycles() / p.CLOCK_HZ * 1e6
-        link = "golden model in Python" if simulated else "UART round trip"
-        errors = f" ({self.errors} error replies)" if self.errors else ""
-        return [
-            (
-                f"Time per frame:  YOLOv8n {self.t_yolo * 1e3:.1f} ms  |  {link}"
-                f" {self.t_uart * 1e3:.2f} ms for {self.n_batches} batch(es)"
-                f"  |  {self.fps:.1f} fps"
-            ),
-            (
-                f"Per batch:  FPGA core {core_us:.2f} us ({full_latency_cycles()} cycles,"
-                f" the same for every input)  |  torchvision NMS on this frame's boxes"
-                f" {self.t_torch * 1e6:.0f} us"
-            ),
-            (
-                f"Check:  {'board' if not simulated else 'stand-in'} == golden model"
-                f" {self.agree}/{self.batches} batches{errors}"
-                f"  |  boxes decided differently by float torchvision: {self.torch_diff}"
-            ),
-            (
-                f"Limits:  IoU threshold {IOU:.2f}, fixed  |  max {p.N} boxes per class"
-                "  |  keys: space pause, n step through NMS, q quit"
-            ),
-        ]
-
-
-def torchvision_masks(batches: list[batching.ClassBatch]) -> tuple[list[int], float]:
-    """Run float NMS on the same batches, for comparison and timing.
-
-    Args:
-        batches: The batches sent to the board.
-
-    Returns:
-        ``(keep_mask per batch, seconds for one batched_nms call over all of them)``.
-    """
-    rows, scores, ids, owner = [], [], [], []
-    for i, b in enumerate(batches):
-        for slot in range(b.count):
-            box = b.boxes[slot]
-            rows.append([box.x, box.y, box.a, box.b])
-            scores.append(box.score)
-            ids.append(b.cls)
-            owner.append((i, slot))
-    masks = [0] * len(batches)
-    if not rows:
-        return masks, 0.0
-    boxes_t = torch.tensor(rows, dtype=torch.float32)
-    scores_t = torch.tensor(scores, dtype=torch.float32)
-    ids_t = torch.tensor(ids)
-    t0 = time.perf_counter()
-    kept = torchvision.ops.batched_nms(boxes_t, scores_t, ids_t, IOU)
-    elapsed = time.perf_counter() - t0
-    for k in kept.tolist():
-        i, slot = owner[k]
-        masks[i] |= 1 << slot
-    return masks, elapsed
+        if simulated:
+            check = "No board connected: the golden model's result is shown"
+            timing = f"YOLOv8n {self.t_yolo * 1e3:.0f} ms  |  {self.fps:.1f} fps"
+        else:
+            errors = f", {self.errors} failed replies" if self.errors else ""
+            check = f"Board result = golden model: {self.agree}/{self.batches} batches{errors}"
+            timing = (
+                f"YOLOv8n {self.t_yolo * 1e3:.0f} ms  |  UART link"
+                f" {self.t_uart * 1e3:.1f} ms  |  {self.fps:.1f} fps"
+            )
+        keys = (
+            "PAUSED  |  space resume, n next NMS step, q quit"
+            if paused
+            else "space pause, n step through NMS, q quit"
+        )
+        return [check, timing, f"IoU threshold {IOU:.1f}  |  {keys}"]
 
 
 def process(
@@ -176,10 +146,7 @@ def process(
             stats.log.append(f"class {b.cls}: keep_mask {reply.keep_mask:#010x} wrong")
         keep_masks.append(reply.keep_mask)
 
-    tv_masks, stats.t_torch = torchvision_masks(batches)
-    stats.torch_diff += sum(
-        (a ^ b).bit_count() for a, b in zip(tv_masks, keep_masks, strict=True)
-    )
+    stats.over_cap += sum(len(b.over_cap) for b in batches)
     return draw.Frame(image, cands, batches, keep_masks, detector.names)
 
 
@@ -247,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     writer = None
     paused, frame, steps, step_i, shown = False, None, [], None, 0
 
+    if not args.no_window:
+        cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
+
     try:
         while args.frames is None or shown < args.frames:
             if not paused:
@@ -267,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             step = (steps[step_i], len(steps), step_i) if step_i is not None else None
             canvas = draw.compose(
                 frame,
-                stats.lines(simulated=args.no_board),
+                stats.lines(simulated=args.no_board, paused=paused),
                 simulated=args.no_board,
                 step=step,
             )
@@ -279,15 +249,21 @@ def main(argv: list[str] | None = None) -> int:
                 writer.write(canvas)
             if args.no_window:
                 continue
+            if paused:
+                draw.badge(canvas, "PAUSED")
             cv2.imshow(WINDOW, canvas)
             key = cv2.waitKey(30 if paused else 1) & 0xFF
             if key in (ord("q"), 27):
                 break
+            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+                break  # closed with the window's own close button
             if key == ord(" "):
                 paused, step_i = not paused, None
             elif key == ord("n") and steps:
                 paused = True
                 step_i = 0 if step_i is None else (step_i + 1) % len(steps)
+    except KeyboardInterrupt:
+        pass  # Ctrl+C in the terminal: stop like q, and still print the summary
     finally:
         cap.release()
         if writer is not None:
@@ -298,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"{shown} frames, {stats.batches} batches, {stats.agree} agree with the golden model,"
-        f" {stats.errors} error replies"
+        f" {stats.errors} error replies, {stats.over_cap} boxes over {p.N} per class not sent"
     )
     return EXIT_OK if stats.agree == stats.batches else EXIT_FAIL
 

@@ -360,22 +360,22 @@ the board's sorter still does the sorting) → all of the frame's batches sent b
 
 | on screen | meaning |
 |---|---|
-| left panel | every candidate the detector produced: the clutter NMS exists to remove |
-| right, thick with a label | kept by the board |
-| right, red | removed by the board |
-| right, dashed grey | over 32 for its class: never sent, so not checked |
-| HUD, *time per frame* | YOLO and the UART take milliseconds; the core takes 1.13 µs every batch |
-| HUD, *check* | every reply compared with `model.nms_sequential`; anything but all-equal is a bug |
-| HUD, *differs from float torchvision* | boxes where float IoU `> 0.5` and the integer `≥ 0.5` disagree. Expected, and rare |
+| left panel | every box YOLOv8n produced: the clutter NMS exists to remove |
+| right panel | the boxes the board kept, labelled with class and score |
+| *Board result = golden model* | every reply compared with `model.nms_sequential`; anything but all-equal is a bug |
+| *YOLOv8n, UART link* | where the frame's time actually goes: milliseconds, against the core's microseconds |
 
-**Keys:** `space` pauses or resumes; `n` pauses and steps through the frame's NMS one box at a time,
-highest score first: the current box in white, those it removes in red. That is the "how it works"
-moment. `q` quits.
+Boxes beyond the 32 highest-scoring in one class are not sent; the count is printed in the
+terminal summary when the demo exits.
 
-The demo is deliberately honest about its limits: the 32-per-class cap and the fixed 0.5 threshold are
-shown on screen, not hidden. It is **not** a speed-up demo: at
-~5 ms of UART per frame against 1.13 µs of compute, NMS on the host is faster end to end
-([README](../README.md)). The `--save out.mp4` option records exactly what is shown.
+**Keys** (the video window must have focus): `space` pauses or resumes, with PAUSED shown on
+screen; `n` pauses and steps through the frame's NMS one box at a time, highest score first: the
+current box in white, those it removes in red. That is the "how it works" moment. `q`, the window's
+close button, or Ctrl+C in the terminal quits, and each prints the run's summary.
+
+It is **not** a speed-up demo: at ~5 ms of UART per frame against 1.13 µs of compute, NMS on the
+host is faster end to end ([README](../README.md)). The `--save out.mp4` option records exactly
+what is shown.
 
 The `demo` extra pulls Ultralytics (AGPL-3.0) and the windowed `opencv-python`. `--exact` keeps the
 `bench` extra's headless OpenCV out of the environment, because the headless build cannot open a window.
