@@ -21,6 +21,10 @@ bench = [
 ]
 # The detector load. Ultralytics and its weights are AGPL-3.0; used only as a benchmark load.
 bench-load = ["ultralytics>=8.3"]
+# The live demo (python -m demo, make demo). Ultralytics is AGPL-3.0, as above, and pulls
+# opencv-python, the build that can open windows. Never combine it with `bench`, whose
+# headless OpenCV shadows that build: run it with `uv run --exact --extra demo`.
+demo = ["ultralytics>=8.3"]
 
 [dependency-groups]
 dev = [

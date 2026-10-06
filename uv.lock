@@ -391,6 +391,9 @@ bench = [
 bench-load = [
     { name = "ultralytics" },
 ]
+demo = [
+    { name = "ultralytics" },
+]
 render = [
     { name = "pillow" },
 ]
@@ -414,8 +417,9 @@ requires-dist = [
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'bench'", specifier = ">=0.19", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "sys_platform != 'linux' and extra == 'bench'", specifier = ">=0.19" },
     { name = "ultralytics", marker = "extra == 'bench-load'", specifier = ">=8.3" },
+    { name = "ultralytics", marker = "extra == 'demo'", specifier = ">=8.3" },
 ]
-provides-extras = ["render", "bench", "bench-load"]
+provides-extras = ["render", "bench", "bench-load", "demo"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -118,9 +118,10 @@ tuned design axis.
 
 ## 9. Demonstration and housekeeping
 
-- **A detector front-end demo.** A host script that runs a detector, streams its
-  boxes to the board and draws the survivors from the returned `keep_mask`. The FPGA side does
-  not change. **Effort:** 1–2 days.
+- **A detector front-end demo.** Done: `make demo` ([user_guide.md](../user_guide.md) §11).
+  Not done: exact handling of more than 32 boxes per class (carry the keepers into the next
+  batch, since a suppressed box never suppresses), and packing several classes into one batch by
+  tile offset.
 - **The UART round trip at the FTDI default 16 ms timer.** A five-minute measurement with the board
   ([hardware.md](../results/hardware.md) §6).
 - **Merge to `main` and tag a release.** The finished README is on `prototype/bench`; GitHub shows

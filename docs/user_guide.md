@@ -14,6 +14,7 @@ that assume it.
 8. [Capture the latency on silicon](#8-capture-the-latency-on-silicon)
 9. [Benchmark against software](#9-benchmark-against-software)
 10. [Conventions and adding code](#10-conventions-and-adding-code)
+11. [Live demo](#11-live-demo)
 
 ---
 
@@ -337,3 +338,45 @@ What was measured, how, and what it shows is in [benchmarks.md](results/benchmar
 - To run a testbench in several configurations, add a `SWEEP_tb_<name>` line: one word per run,
   several `-g` flags for one run joined by commas. A `SWEEP_FULL_tb_<name>` line replaces it under
   `make test-full`.
+
+---
+
+## 11. Live demo
+
+`python -m demo` shows what the block does, using real video: YOLOv8n's raw boxes on the left, and
+on the right what survives NMS on the board. The bitstream is the shipped `nms_top`, unchanged.
+
+```bash
+make program                                     # §6, then check it with make host
+make demo                                        # webcam 0, board on /dev/ttyUSB1
+make demo SRC=clip.mp4 DEMO_ARGS=--loop          # a recorded clip, repeated: same demo every time
+make demo DEMO_ARGS=--no-board                   # no board: the golden model stands in, marked SIMULATED
+```
+
+Per frame: YOLOv8n's head output before its own NMS (8,400 anchors) → confidence > 0.25 → one batch
+per class → the 32 highest-scoring per class, picked with `argpartition` (a selection, not a sort, so
+the board's sorter still does the sorting) → all of the frame's batches sent back to back
+(`Board.transact_many`) → `keep_mask` per batch.
+
+| on screen | meaning |
+|---|---|
+| left panel | every candidate the detector produced: the clutter NMS exists to remove |
+| right, thick with a label | kept by the board |
+| right, red | removed by the board |
+| right, dashed grey | over 32 for its class: never sent, so not checked |
+| HUD, *time per frame* | YOLO and the UART take milliseconds; the core takes 1.13 µs every batch |
+| HUD, *check* | every reply compared with `model.nms_sequential`; anything but all-equal is a bug |
+| HUD, *differs from float torchvision* | boxes where float IoU `> 0.5` and the integer `≥ 0.5` disagree. Expected, and rare |
+
+**Keys:** `space` pauses or resumes; `n` pauses and steps through the frame's NMS one box at a time,
+highest score first: the current box in white, those it removes in red. That is the "how it works"
+moment. `q` quits.
+
+The demo is deliberately honest about its limits: the 32-per-class cap and the fixed 0.5 threshold are
+shown on screen, not hidden. It is **not** a speed-up demo: at
+~5 ms of UART per frame against 1.13 µs of compute, NMS on the host is faster end to end
+([README](../README.md)). The `--save out.mp4` option records exactly what is shown.
+
+The `demo` extra pulls Ultralytics (AGPL-3.0) and the windowed `opencv-python`. `--exact` keeps the
+`bench` extra's headless OpenCV out of the environment, because the headless build cannot open a window.
+The first run downloads `yolov8n.pt` (6 MB) into the repository root, where `.gitignore` covers it.

@@ -14,6 +14,8 @@
 #   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
+#   make demo            live demo: YOLO boxes, NMS on the board, drawn side by side
+#                        (SRC=0|clip.mp4, PORT=..., DEMO_ARGS="--no-board --loop")
 #   make bench           benchmark NMS against its competitors (docs/user_guide.md §9):
 #                        TARGET=cpu|fpga, LOAD=none|pipeline|concurrent|stress, PORT=...,
 #                        BENCH_ARGS="--impls c_scalar opencv --cases hostile"
@@ -132,14 +134,14 @@ PYTHON = uv run
 # Lint everything under models/, notebook included (ruff skips non-Python files, so the
 # 267 MB .ply under models/data is not a concern). Formatting is enforced only on .py
 # sources: reformatting notebook cells is churn that fights nbstripout for no benefit.
-PYLINT_SRC   = models benchmarks explorations tests
-PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks explorations tests
+PYLINT_SRC   = models benchmarks demo explorations tests
+PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks demo explorations tests
 
-.PHONY: all test test-full lint clean help $(TB_ALL) synth xsim impl program host bench bench-report ila
+.PHONY: all test test-full lint clean help $(TB_ALL) synth xsim impl program host demo bench bench-report ila
 .DEFAULT_GOAL := help
 
 help:
-	@echo "targets: test | test-full | lint | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
+	@echo "targets: test | test-full | lint | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | demo [SRC=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
 
 $(WORKDIR):
 	@mkdir -p $(WORKDIR)
@@ -255,6 +257,17 @@ PORT ?= /dev/ttyUSB1
 ARGS ?= --selftest
 host:
 	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
+
+# The live demo (docs/user_guide.md §11): a webcam or clip through YOLOv8n, its raw boxes
+# through the board, both drawn side by side with the timing and the golden-model check.
+# --exact keeps the `bench` extra's headless OpenCV out, since it cannot open a window.
+#   make demo                                   webcam 0, board on PORT
+#   make demo SRC=clip.mp4 DEMO_ARGS=--loop     a recorded clip, repeated
+#   make demo DEMO_ARGS=--no-board              the golden model stands in for the board
+SRC       ?= 0
+DEMO_ARGS ?=
+demo:
+	$(PYTHON) --exact --extra demo python -m demo $(SRC) --port $(PORT) $(DEMO_ARGS)
 
 # Benchmark NMS against its competitors (docs/user_guide.md §9). The target names what
 # is measured and the results name which machine, so the same command runs on the laptop
