@@ -18,6 +18,10 @@ from pathlib import Path
 from models.nms import bench
 
 LIBRARIES = ("numpy", "torch", "torchvision", "opencv-python-headless", "ultralytics")
+# Results name a library by its import package; these are the distributions that provide it,
+# in order. Ultralytics ships the same package as `ultralytics-opencv-headless`, which the
+# extras use, and committed results record it under `ultralytics`.
+DISTRIBUTIONS = {"ultralytics": ("ultralytics-opencv-headless", "ultralytics")}
 DEVICE_TREE_MODEL = Path("/proc/device-tree/model")
 REPO = Path(__file__).resolve().parents[1]
 
@@ -87,10 +91,13 @@ def library_versions() -> dict[str, str]:
     """
     out = {}
     for name in LIBRARIES:
-        try:
-            out[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            out[name] = ""
+        out[name] = ""
+        for dist in DISTRIBUTIONS.get(name, (name,)):
+            try:
+                out[name] = importlib.metadata.version(dist)
+                break
+            except importlib.metadata.PackageNotFoundError:
+                continue
     return out
 
 

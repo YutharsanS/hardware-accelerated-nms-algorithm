@@ -20,11 +20,14 @@ bench = [
     "matplotlib>=3.8",
 ]
 # The detector load. Ultralytics and its weights are AGPL-3.0; used only as a benchmark load.
-bench-load = ["ultralytics>=8.3"]
-# The live demo (python -m demo, make demo). Ultralytics is AGPL-3.0, as above, and pulls
-# opencv-python, the build that can open windows. Never combine it with `bench`, whose
-# headless OpenCV shadows that build: run it with `uv run --exact --extra demo`.
-demo = ["ultralytics>=8.3"]
+# ultralytics-opencv-headless is Ultralytics' own distribution of the same package built on
+# opencv-python-headless, so the project has exactly one OpenCV: plain `ultralytics` pulls
+# opencv-python, which installs into the same cv2/ folder and breaks the other.
+bench-load = ["ultralytics-opencv-headless>=8.3"]
+# The live demo (python -m demo, make demo): a Qt window via pyside6-essentials (LGPL-3.0;
+# the widgets, without WebEngine and the add-ons) with pyqtgraph plots (MIT); Ultralytics as
+# above.
+demo = ["ultralytics-opencv-headless>=8.3", "pyside6-essentials>=6.7", "pyqtgraph>=0.13"]
 
 [dependency-groups]
 dev = [
@@ -69,6 +72,7 @@ extend-exclude = [
 "benchmarks/feasibility/*.py" = ["T201"]
 "benchmarks/report.py" = ["T201"]
 "benchmarks/onchip_latency.py" = ["T201"]
+"demo/audit.py" = ["T201"]
 
 [tool.ruff.lint]
 extend-select = [

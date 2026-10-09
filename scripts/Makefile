@@ -14,7 +14,7 @@
 #   make ila             capture T on silicon with the ILA build (make impl ILA=1 first)
 #   make host            talk to the programmed board: --selftest by default
 #                        (PORT=/dev/ttyUSBn, ARGS="--crc-test --random 1000 --latency 500")
-#   make demo            live demo: YOLO boxes, NMS on the board, drawn side by side
+#   make demo            live demo: YOLO boxes, NMS on the board, a window of the data
 #                        (SRC=0|clip.mp4, PORT=..., DEMO_ARGS="--no-board --loop")
 #   make bench           benchmark NMS against its competitors (docs/user_guide.md §9):
 #                        TARGET=cpu|fpga, LOAD=none|pipeline|concurrent|stress, PORT=...,
@@ -141,7 +141,7 @@ PYFORMAT_SRC = $(wildcard models/__init__.py) $(wildcard models/nms) benchmarks 
 .DEFAULT_GOAL := help
 
 help:
-	@echo "targets: test | test-full | lint | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | demo [SRC=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
+	@echo "targets: test | test-full | lint | $(if $(TB_ALL),$(TB_ALL),<no testbenches yet>) | synth MOD=<mod> | impl | program | host [PORT=..] [ARGS=..] | demo [SRC=..] [DEMO_ARGS=..] | bench [TARGET=..] [LOAD=..] | bench-report | xsim TB=<tb> | clean"
 
 $(WORKDIR):
 	@mkdir -p $(WORKDIR)
@@ -258,16 +258,19 @@ ARGS ?= --selftest
 host:
 	$(PYTHON) python -m models.nms.host --port $(PORT) $(ARGS)
 
-# The live demo (docs/user_guide.md §11): a webcam or clip through YOLOv8n, its raw boxes
-# through the board, both drawn side by side with the timing and the golden-model check.
-# --exact keeps the `bench` extra's headless OpenCV out, since it cannot open a window.
-#   make demo                                   webcam 0, board on PORT
-#   make demo SRC=clip.mp4 DEMO_ARGS=--loop     a recorded clip, repeated
-#   make demo DEMO_ARGS=--no-board              the golden model stands in for the board
-SRC       ?= 0
+# The live demo (docs/user_guide.md §11): webcam, video files or COCO crowd images through
+# YOLOv8n, the raw boxes through the board, and a window showing the data. The source,
+# detector size and confidence can be changed in the window.
+#   make demo                                      webcam 0, board on PORT
+#   make demo SRC=coco                             COCO crowd images (downloaded once)
+#   make demo SRC="a.mp4 b.mp4"                    video files, looping
+#   make demo DEMO_ARGS="--record run.jsonl"       keep every frame's data; then
+#   uv run python -m demo.audit run.jsonl          re-check every reply offline
+#   make demo DEMO_ARGS=--no-board                 the golden model, no board
+SRC       ?=
 DEMO_ARGS ?=
 demo:
-	$(PYTHON) --exact --extra demo python -m demo $(SRC) --port $(PORT) $(DEMO_ARGS)
+	$(PYTHON) --extra demo python -m demo $(SRC) --port $(PORT) $(DEMO_ARGS)
 
 # Benchmark NMS against its competitors (docs/user_guide.md §9). The target names what
 # is measured and the results name which machine, so the same command runs on the laptop

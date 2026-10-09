@@ -171,15 +171,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cloudpickle"
-version = "3.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
-]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -389,10 +380,12 @@ bench = [
     { name = "torchvision", version = "0.29.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
 ]
 bench-load = [
-    { name = "ultralytics" },
+    { name = "ultralytics-opencv-headless" },
 ]
 demo = [
-    { name = "ultralytics" },
+    { name = "pyqtgraph" },
+    { name = "pyside6-essentials" },
+    { name = "ultralytics-opencv-headless" },
 ]
 render = [
     { name = "pillow" },
@@ -411,13 +404,15 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", marker = "extra == 'bench'", specifier = ">=4.10" },
     { name = "pillow", marker = "extra == 'render'", specifier = ">=10.0" },
+    { name = "pyqtgraph", marker = "extra == 'demo'", specifier = ">=0.13" },
     { name = "pyserial", specifier = ">=3.5" },
+    { name = "pyside6-essentials", marker = "extra == 'demo'", specifier = ">=6.7" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'bench'", specifier = ">=2.4", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'bench'", specifier = ">=2.4" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'bench'", specifier = ">=0.19", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "sys_platform != 'linux' and extra == 'bench'", specifier = ">=0.19" },
-    { name = "ultralytics", marker = "extra == 'bench-load'", specifier = ">=8.3" },
-    { name = "ultralytics", marker = "extra == 'demo'", specifier = ">=8.3" },
+    { name = "ultralytics-opencv-headless", marker = "extra == 'bench-load'", specifier = ">=8.3" },
+    { name = "ultralytics-opencv-headless", marker = "extra == 'demo'", specifier = ">=8.3" },
 ]
 provides-extras = ["render", "bench", "bench-load", "demo"]
 
@@ -888,25 +883,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opencv-python"
-version = "5.0.0.93"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/79/4c/a438d23e09ce2033c09f7b784ad2fbdb0adf529e434101ed28f142226f98/opencv_python-5.0.0.93.tar.gz", hash = "sha256:66aac3e5b5faa48d4025816592f3af19e4bfc2c68dec067bae2dbb4ca10aa9e2", size = 81802749, upload-time = "2026-07-02T06:59:53.815Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/75/76f6ade78f6102c61034f828e2a22616708df2c9504bc8d6af9dd8f73dc5/opencv_python-5.0.0.93-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:198a75138241810206a17c829dbcc40a7cb1841cda538ca86cbbfc6c7d95f898", size = 48322443, upload-time = "2026-07-02T05:50:25.466Z" },
-    { url = "https://files.pythonhosted.org/packages/15/8c/bc1bda6aae69a32e9d84fc34153ba104cd25226861eb4aea33b2cea4860d/opencv_python-5.0.0.93-cp37-abi3-macosx_14_0_x86_64.whl", hash = "sha256:6bbc32f59e1b1a7db7b39c81f63d00625f041d333037fd8702f6da52cc39108b", size = 34782755, upload-time = "2026-07-02T05:51:30.556Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/8a/b04776ec45d2dea08a1b176f1829201db3515d4ed16c35f8fcc9fa7beb16/opencv_python-5.0.0.93-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e2b4272e736836f66c2d176e43ab8101f3a00d45654916399f52e150c58981ac", size = 50614064, upload-time = "2026-07-02T06:53:22.604Z" },
-    { url = "https://files.pythonhosted.org/packages/95/54/eb47866b94f2b5b42dde17644b78055ef1ee05aae59962c7290e55270803/opencv_python-5.0.0.93-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f8b6d0a212253dd26ad338c812f1f23ca118fdf05a9c8c6b9444f161aa8c5881", size = 71064711, upload-time = "2026-07-02T06:54:13.148Z" },
-    { url = "https://files.pythonhosted.org/packages/93/da/962579f1e703cbf8c5422fd1f576467dcb3b5b0b0b81c1471c979764353a/opencv_python-5.0.0.93-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:08d5d91d967b58d6db86073b2ad3eaef88ca4ebdfd45c9059bf59f5ded0c7ad2", size = 49798576, upload-time = "2026-07-02T06:54:33.781Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/4c/c73f828fdbcd37eaf21d08fa852544a3ca7c2dbb3ea76873d64f2ea413d1/opencv_python-5.0.0.93-cp37-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c8de2dec111122a02e8beb28e16c31904992dfd6186560b142a92c71403c1039", size = 73783032, upload-time = "2026-07-02T06:55:03.415Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/4b/edaf83b996ca5a1a3d8ccad485706b9c6d4742b13b9c4586bf1c1e7d9423/opencv_python-5.0.0.93-cp37-abi3-win32.whl", hash = "sha256:4b4b1a34c79bf8d3738e3cfe9a9e67b51a79663f6b692cbdad8c31f570da4157", size = 35564734, upload-time = "2026-07-02T05:49:57.704Z" },
-    { url = "https://files.pythonhosted.org/packages/21/f0/9fa6e85cb10c8eb36a0222d27e50fe381b86ce49a55446bf39f491727564/opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl", hash = "sha256:f90ba04b8f73bc5c3814037699739f0156f597338a98f05956c684e7c3ca10d2", size = 44000345, upload-time = "2026-07-02T05:49:54.971Z" },
-]
-
-[[package]]
 name = "opencv-python-headless"
 version = "5.0.0.93"
 source = { registry = "https://pypi.org/simple" }
@@ -1098,12 +1074,39 @@ wheels = [
 ]
 
 [[package]]
+name = "pyqtgraph"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama" },
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/36/4c242f81fdcbfa4fb62a5645f6af79191f4097a0577bd5460c24f19cc4ef/pyqtgraph-0.14.0-py3-none-any.whl", hash = "sha256:7abb7c3e17362add64f8711b474dffac5e7b0e9245abdf992e9a44119b7aa4f5", size = 1924755, upload-time = "2025-11-16T19:43:22.251Z" },
+]
+
+[[package]]
 name = "pyserial"
 version = "3.5"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
+]
+
+[[package]]
+name = "pyside6-essentials"
+version = "6.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "shiboken6" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/90/d528f8dd3f9f20712bc719e10c698d27c998e1dd76ed3f33b6fb606d0972/pyside6_essentials-6.12.0-cp310-abi3-macosx_14_0_universal2.whl", hash = "sha256:0867b709a724db28b161227c7d6ecb5ed10cc09226a53542417ac6dee1308239", size = 116002775, upload-time = "2026-10-08T09:09:54.453Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/3c/7597d8dcb36aa8315427635ec6ec9d850ffbad4ce78b9118ac854889f2d3/pyside6_essentials-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:16f4b5e41daf49235ae048458243da9efe5f3d8040f9cc5aa454ce69893d3bd9", size = 84346433, upload-time = "2026-10-08T09:10:02.825Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/4e/f4fd4c016719be832ec49d3c87940459e87fd666179a0a199a3998d07916/pyside6_essentials-6.12.0-cp310-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:08c5841063fc1df69b7fa1ee405f539e66576a83fc48004be3e2c5e35ccbfa69", size = 83810102, upload-time = "2026-10-08T09:10:09.13Z" },
+    { url = "https://files.pythonhosted.org/packages/03/61/9a7e32a37b224f68506785bfb0f288d516098ec71681782d72b695a6c95d/pyside6_essentials-6.12.0-cp310-abi3-win_amd64.whl", hash = "sha256:c9a95102aa23c1f86516a30d5a9be37552d324eee7e567eb7508973f1218cb42", size = 82153795, upload-time = "2026-10-08T09:10:15.104Z" },
+    { url = "https://files.pythonhosted.org/packages/92/11/43afb3d0e7c25dd09f0eb7e44f1283dadb5fa8d8b517249fe3fde02e6702/pyside6_essentials-6.12.0-cp310-abi3-win_arm64.whl", hash = "sha256:c76aa689989bf9bb9b45535e0a81c6733294df720b0eed1308fa30d2606b98cc", size = 62073456, upload-time = "2026-10-08T09:10:20.202Z" },
 ]
 
 [[package]]
@@ -1340,6 +1343,18 @@ wheels = [
 ]
 
 [[package]]
+name = "shiboken6"
+version = "6.12.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/45/11536fba5f50a57671eb14441c6098096f3e57074e54c9d7d66039a5831e/shiboken6-6.12.0-cp310-abi3-macosx_14_0_universal2.whl", hash = "sha256:47105e05baf57d35453e07d240bbe59cb4b8d9565377ea5134ff9fb37d4f5c02", size = 479653, upload-time = "2026-10-08T09:10:41.506Z" },
+    { url = "https://files.pythonhosted.org/packages/49/c2/a04fa003b4360e99d8e3fc2829abacf37396ace63ea1cd616402209ec7c6/shiboken6-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3bde565bb0890044b5c7f63808adddede5abc241e9395a2bfed61919884d6240", size = 279268, upload-time = "2026-10-08T09:10:42.982Z" },
+    { url = "https://files.pythonhosted.org/packages/97/ca/a4415e6218e0dff764fe2b2d30db2fc8f499a08ace07634232ade3f73adc/shiboken6-6.12.0-cp310-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:ff72a72b3277b418902d562b987b33a6f6818bed9fe40a49d634d09bc67f620e", size = 276562, upload-time = "2026-10-08T09:10:44.25Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/b6/bee97e7a2edeab72aafabb46ee5adc939790a638d107860b4cad7a20e407/shiboken6-6.12.0-cp310-abi3-win_amd64.whl", hash = "sha256:a1906cb8116869178c64b6bab52623bbc8b4ceed7b30bfc3c9aa0f6e67f6438e", size = 1265476, upload-time = "2026-10-08T09:10:45.627Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/d5/5894d35f8a470ca8acff0d1cd8f15b1c94cbfdfe0ce4a6ec0fcf10b95bd1/shiboken6-6.12.0-cp310-abi3-win_arm64.whl", hash = "sha256:da382e68f0815b31b6dc2bce11a465b148c4f42c37b91546a361de1576567d10", size = 1838851, upload-time = "2026-10-08T09:10:47.123Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1495,16 +1510,14 @@ wheels = [
 ]
 
 [[package]]
-name = "ultralytics"
-version = "8.4.165"
+name = "ultralytics-opencv-headless"
+version = "8.4.174"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cloudpickle" },
-    { name = "filelock" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
-    { name = "opencv-python" },
+    { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "polars" },
     { name = "psutil" },
@@ -1517,9 +1530,9 @@ dependencies = [
     { name = "ultralytics-platform" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/61/3a/bd408fc79d7627002e58793ab0d70e5ab21125d83ccb0fe4dd631d0526bc/ultralytics-8.4.165.tar.gz", hash = "sha256:9e8f8a9aea3c0e4c3e195434e349a800b8356639704ceea15b18f560d8e090bd", size = 1260138, upload-time = "2026-09-28T19:42:38.645Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/4a/490b24d61bb5e2ef0ee2a284268fabd907fe9218ba3136c08a484b719e8a/ultralytics_opencv_headless-8.4.174.tar.gz", hash = "sha256:c3afced07cb5741421c9bc730561635c2602134f9c3ad8816a193d9b11911aff", size = 1268228, upload-time = "2026-10-06T14:50:59.507Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/ba/8d45868cdf808114eab32f5f2571c1d69b95c9f025395963104fdc8b7d03/ultralytics-8.4.165-py3-none-any.whl", hash = "sha256:1eab69f73fdec8f23475510dde086aacfd3536c33c10980a57d75a644eb4ab1e", size = 1410272, upload-time = "2026-09-28T19:42:34.109Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/b4/385716bfa982b8cbba4990bbaa47a49bd5098a61a472a23e8ab1ff378b8c/ultralytics_opencv_headless-8.4.174-py3-none-any.whl", hash = "sha256:2a4e4db410b6e5dcf5d3b618d45c10f2c6db2c75c525a34533ea75f044378e8f", size = 1420200, upload-time = "2026-10-06T14:50:55.297Z" },
 ]
 
 [[package]]
@@ -1536,16 +1549,16 @@ wheels = [
 
 [[package]]
 name = "ultralytics-thop"
-version = "2.2.1"
+version = "2.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/d4/6c6f3a4c6ee61682333a89859aca51e8cef942b636f5e6f875e31558f191/ultralytics_thop-2.2.1.tar.gz", hash = "sha256:e689ba63d146aacb372fdde593c303da96030abea0a76198c8ac68a5a376eab8", size = 38877, upload-time = "2026-09-27T21:54:25.068Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/bf/b7b993e3b2411fc9894a26b8679931ca07c0d013f05bb620c63ae1911c5f/ultralytics_thop-2.2.2.tar.gz", hash = "sha256:149a89c26c2be35b709fa25951f4644dea13d63017025569a193159a5908e3ed", size = 39543, upload-time = "2026-10-01T09:34:58.406Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/08/73eb3c48098ddb2c75c5ecad1476e7dc92df49d12527fcc824d07cfebe81/ultralytics_thop-2.2.1-py3-none-any.whl", hash = "sha256:fcf3a58db5fbbde800079ab09d4915e9cc3f86e0a78b6a4e7b525149b2d18569", size = 31996, upload-time = "2026-09-27T21:54:23.791Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/53/0141f38ee122fc25b234ad1318e0c87050f3dfa84158f8dd46cd0c90da1a/ultralytics_thop-2.2.2-py3-none-any.whl", hash = "sha256:10ef0f4ab45261516008660619fef114cddc2b7c8383d9d3bd76c1e551208ca3", size = 32582, upload-time = "2026-10-01T09:34:57.074Z" },
 ]
 
 [[package]]

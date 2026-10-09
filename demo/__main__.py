@@ -1,171 +1,109 @@
-"""Live demo: YOLO finds boxes, the board runs NMS on them, both are drawn side by side.
+"""Live demo: YOLOv8n finds boxes, the board runs NMS on them, the window shows the data.
 
-The FPGA side is the shipped ``nms_top`` bitstream, unchanged. Per video frame::
+The FPGA side is the shipped ``nms_top`` bitstream, unchanged. See docs/user_guide.md §11.
 
-    frame -> YOLOv8n raw head (8,400 anchors, before NMS) -> conf > 0.25, one batch per class,
-    top 32 per class -> board over UART -> keep_mask -> draw what was kept
+Usage (``make demo`` wraps it)::
 
-The HUD shows where the time goes and checks every reply against the golden model. It is
-there so the audience does not take the demo as a video speed-up: the board's part is
-1.13 µs and fixed, and the UART and the network take milliseconds.
+    uv run --extra demo python -m demo                       # webcam 0, board on ttyUSB1
+    uv run --extra demo python -m demo coco                  # COCO crowd images
+    uv run --extra demo python -m demo a.mp4 b.mp4           # video files, looping
+    uv run --extra demo python -m demo --no-board            # golden model, no board
+    uv run --extra demo python -m demo --record run.jsonl    # keep every frame's data
+    uv run python -m demo.audit run.jsonl                    # re-check it afterwards
 
-Usage (Ultralytics is AGPL-3.0, so it lives in its own extra; see pyproject.toml)::
-
-    uv run --exact --extra demo python -m demo 0                  # webcam 0, board on ttyUSB1
-    uv run --exact --extra demo python -m demo clip.mp4 --loop    # a recorded clip, repeated
-    uv run --exact --extra demo python -m demo clip.mp4 --no-board  # golden model, no board
-
-Keys: space pauses or resumes, n steps through one frame's NMS decisions box by box, q quits.
+The source, detector size and confidence can all be changed from the window.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 
-# opencv-python's bundled Qt 5 runs on X11 (XWayland) under GNOME anyway, but prints a warning
-# whenever XDG_SESSION_TYPE says wayland, whatever QT_QPA_PLATFORM is. Qt is the only reader
-# of the variable in this process, so state X11 here; nothing outside the demo sees it.
-if os.environ.get("XDG_SESSION_TYPE") == "wayland":
-    os.environ["XDG_SESSION_TYPE"] = "x11"
-
-import cv2
-
-# Importing cv2 points QT_QPA_FONTDIR at cv2/qt/fonts, which the wheel does not ship, so Qt
-# warns on every window draw. Qt reads the variable when the first window opens, so
-# overriding it here, after the import, takes effect.
-SYSTEM_FONTS = Path("/usr/share/fonts/truetype/dejavu")
-if SYSTEM_FONTS.is_dir():
-    os.environ["QT_QPA_FONTDIR"] = str(SYSTEM_FONTS)
-import numpy as np
-
-from benchmarks.feasibility.count_boxes import IMGSZ, raw_predictions
-from demo import batching, draw
-from models.nms import host, model, wire
-from models.nms import params as p
+from demo import batching, coco
+from demo.audit import Totals, audit
+from demo.pipeline import BoardLink, Detector, GoldenBoard, Pipeline, SoftwareNMS
+from demo.records import BOARD_FPGA, BOARD_MODEL, OFFLINE, FrameRecord, Settings
+from demo.sources import ImageSet, Source, VideoFiles, Webcam
+from models.nms import host
 
 EXIT_OK, EXIT_FAIL, EXIT_USAGE = 0, 1, 2
-WINDOW = "NMS on the Basys 3"
-IOU = p.T_INT / (1 << p.K_SHIFT)
+IMAGE_SECONDS = 5.0
+"""How long each still image is shown before the next."""
 
 
-class GoldenBoard:
-    """Stands in for the board with the golden model, for running without hardware."""
-
-    def transact_many(
-        self, batches: list[tuple[list[model.Box], int]]
-    ) -> list[wire.Reply]:
-        """Answer each batch as the board would."""
-        return [
-            wire.Reply(p.STATUS_OK, 0, model.nms_sequential(boxes, mask))
-            for boxes, mask in batches
-        ]
-
-
-@dataclass
-class Stats:
-    """Running totals and the latest frame's timings, for the HUD."""
-
-    batches: int = 0
-    agree: int = 0
-    errors: int = 0
-    over_cap: int = 0
-    t_yolo: float = 0.0
-    t_uart: float = 0.0
-    n_batches: int = 0
-    fps: float = 0.0
-    log: list[str] = field(default_factory=list)
-
-    def lines(self, *, simulated: bool, paused: bool) -> list[str]:
-        """The HUD text."""
-        if simulated:
-            check = "No board connected: the golden model's result is shown"
-            timing = f"YOLOv8n {self.t_yolo * 1e3:.0f} ms  |  {self.fps:.1f} fps"
-        else:
-            errors = f", {self.errors} failed replies" if self.errors else ""
-            check = f"Board result = golden model: {self.agree}/{self.batches} batches{errors}"
-            timing = (
-                f"YOLOv8n {self.t_yolo * 1e3:.0f} ms  |  UART link"
-                f" {self.t_uart * 1e3:.1f} ms  |  {self.fps:.1f} fps"
-            )
-        keys = (
-            "PAUSED  |  space resume, n next NMS step, q quit"
-            if paused
-            else "space pause, n step through NMS, q quit"
-        )
-        return [check, timing, f"IoU threshold {IOU:.1f}  |  {keys}"]
-
-
-def process(
-    image: np.ndarray,
-    detector: object,
-    board: host.Board | GoldenBoard,
-    stats: Stats,
-    conf: float,
-) -> draw.Frame:
-    """Run one frame through the detector and the board, updating the stats.
+def source_spec(args: list[str]) -> tuple[str, list[Path]]:
+    """Turn the positional arguments into a source spec and the video file list.
 
     Args:
-        image: The BGR frame.
-        detector: A loaded Ultralytics YOLO model.
-        board: The board, or the golden model standing in for it.
-        stats: Updated in place.
-        conf: Confidence threshold.
+        args: Nothing (webcam 0), a camera index, ``coco``, or video files.
 
     Returns:
-        What to draw.
+        ``(spec, video paths)``.
     """
-    from ultralytics.utils import ops
-
-    t0 = time.perf_counter()
-    xyxy, scores = raw_predictions(detector, image)
-    xyxy = ops.scale_boxes((IMGSZ, IMGSZ), xyxy.copy(), image.shape[:2])
-    stats.t_yolo = time.perf_counter() - t0
-
-    cands = batching.candidates(xyxy, scores, conf)
-    batches = batching.make_batches(cands)
-
-    t0 = time.perf_counter()
-    replies = board.transact_many([(b.boxes, b.present_mask) for b in batches])
-    stats.t_uart = time.perf_counter() - t0
-    stats.n_batches = len(batches)
-
-    keep_masks = []
-    for b, reply in zip(batches, replies, strict=True):
-        stats.batches += 1
-        if not reply.ok:
-            stats.errors += 1
-            stats.log.append(f"class {b.cls}: status {reply.status:#04x}")
-        elif reply.keep_mask == model.nms_sequential(b.boxes, b.present_mask):
-            stats.agree += 1
-        else:
-            stats.log.append(f"class {b.cls}: keep_mask {reply.keep_mask:#010x} wrong")
-        keep_masks.append(reply.keep_mask)
-
-    stats.over_cap += sum(len(b.over_cap) for b in batches)
-    return draw.Frame(image, cands, batches, keep_masks, detector.names)
+    if not args:
+        return "webcam:0", []
+    if len(args) == 1 and args[0].isdigit():
+        return f"webcam:{args[0]}", []
+    if args == ["coco"]:
+        return "coco", []
+    return "video:0", [Path(a) for a in args]
 
 
-def open_board(args: argparse.Namespace) -> host.Board | GoldenBoard | None:
-    """Open the board, or the golden model with ``--no-board``; None on failure."""
-    if args.no_board:
-        return GoldenBoard()
-    print(host.set_latency_timer(args.port)[1])
-    try:
-        return host.Board(args.port)
-    except host.PortError as exc:
-        print(
-            f"{exc}\n  is the board programmed (make program)? or run with --no-board"
-        )
-        return None
+def opener(video_paths: list[Path]) -> Callable[[str], Source]:
+    """Return a function that opens a source spec; video specs read ``video_paths``."""
+
+    def open_source(spec: str) -> Source:
+        kind, _, arg = spec.partition(":")
+        if kind == "webcam":
+            return Webcam(int(arg))
+        if kind == "video":
+            return VideoFiles(list(video_paths))
+        if kind == "coco":
+            paths, errors = coco.fetch(coco.select())
+            if not paths:
+                msg = "no COCO images: " + (errors[0] if errors else "none selected")
+                raise OSError(msg)
+            return ImageSet(paths, IMAGE_SECONDS)
+        msg = f"unknown source {spec!r}"
+        raise OSError(msg)
+
+    return open_source
+
+
+def summary(records: list[FrameRecord]) -> tuple[str, Totals]:
+    """Return the end-of-run line, from the same audit ``demo.audit`` runs."""
+    t = audit(records)
+    who = "golden model (no board)" if t.model_frames else "board"
+    line = (
+        f"{t.frames} frames, {t.batches} batches: {who} result equal to the golden model"
+        f" {t.equal}, different {t.mismatched}, error replies {t.failed},"
+        f" sent while offline {t.no_reply}"
+    )
+    return line, t
+
+
+def run_headless(
+    pipeline: Pipeline,
+    source: Source,
+    settings: Settings,
+    frames: int,
+    out: list[FrameRecord],
+) -> None:
+    """Run the pipeline without a window, appending each record to ``out``."""
+    for index in range(frames):
+        r0 = time.perf_counter()
+        grab = source.read()
+        r1 = time.perf_counter()
+        if grab is None:
+            break
+        out.append(pipeline.step(grab, (r0, r1), settings, index, source.fps).record)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the demo until the video ends or q is pressed.
+    """Run the demo.
 
     Args:
         argv: Command-line arguments, excluding the program name.
@@ -177,106 +115,83 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m demo", description=__doc__.split("\n")[0]
     )
     parser.add_argument(
-        "source", nargs="?", default="0", help="webcam index or video file"
+        "source", nargs="*", help="camera index (default 0), 'coco', or video files"
     )
     parser.add_argument(
-        "--no-board", action="store_true", help="golden model, no board"
+        "--no-board", action="store_true", help="the golden model, no board"
     )
     parser.add_argument(
         "--port", default=host.DEFAULT_PORT, help="UART (default %(default)s)"
     )
     parser.add_argument("--weights", default="yolov8n.pt", help="Ultralytics weights")
+    parser.add_argument("--imgsz", type=int, choices=(640, 320), default=640)
     parser.add_argument("--conf", type=float, default=batching.CONF_THRESHOLD)
-    parser.add_argument(
-        "--loop", action="store_true", help="replay a video file forever"
-    )
-    parser.add_argument(
-        "--save", type=Path, help="also write the shown video to this file"
-    )
+    parser.add_argument("--record", type=Path, help="append every frame's data (JSONL)")
+    parser.add_argument("--save", type=Path, help="record the window to a video file")
     parser.add_argument("--frames", type=int, help="stop after this many frames")
     parser.add_argument(
-        "--no-window", action="store_true", help="no window (with --save)"
+        "--headless", action="store_true", help="no window: run and print the totals"
+    )
+    parser.add_argument(
+        "--no-software",
+        action="store_true",
+        help="skip the OpenCV/torchvision comparison",
     )
     args = parser.parse_args(argv)
 
-    from ultralytics import YOLO
-
-    source = int(args.source) if args.source.isdigit() else args.source
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        print(f"cannot open video source {args.source!r}")
-        return EXIT_USAGE
-    board = open_board(args)
-    if board is None:
-        return EXIT_USAGE
-    detector = YOLO(args.weights)
-    stats = Stats()
-    writer = None
-    paused, frame, steps, step_i, shown = False, None, [], None, 0
-
-    if not args.no_window:
-        cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
-
-    try:
-        while args.frames is None or shown < args.frames:
-            if not paused:
-                ok, image = cap.read()
-                if not ok:
-                    if args.loop and isinstance(source, str):
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        continue
-                    break
-                t0 = time.perf_counter()
-                frame = process(image, detector, board, stats, args.conf)
-                stats.fps = 0.9 * stats.fps + 0.1 / (time.perf_counter() - t0)
-                for line in stats.log:
-                    print(f"frame {shown}: {line}", file=sys.stderr)
-                stats.log.clear()
-                steps, step_i = draw.steps_of(frame), None
-                shown += 1
-            step = (steps[step_i], len(steps), step_i) if step_i is not None else None
-            canvas = draw.compose(
-                frame,
-                stats.lines(simulated=args.no_board, paused=paused),
-                simulated=args.no_board,
-                step=step,
-            )
-            if args.save and not paused:
-                if writer is None:
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                    h, w = canvas.shape[:2]
-                    writer = cv2.VideoWriter(str(args.save), fourcc, 10, (w, h))
-                writer.write(canvas)
-            if args.no_window:
-                continue
-            if paused:
-                draw.badge(canvas, "PAUSED")
-            cv2.imshow(WINDOW, canvas)
-            key = cv2.waitKey(30 if paused else 1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                break  # closed with the window's own close button
-            if key == ord(" "):
-                paused, step_i = not paused, None
-            elif key == ord("n") and steps:
-                paused = True
-                step_i = 0 if step_i is None else (step_i + 1) % len(steps)
-    except KeyboardInterrupt:
-        pass  # Ctrl+C in the terminal: stop like q, and still print the summary
-    finally:
-        cap.release()
-        if writer is not None:
-            writer.release()
-        if isinstance(board, host.Board):
-            board.__exit__(None, None, None)
-        cv2.destroyAllWindows()
-
-    print(
-        f"{shown} frames, {stats.batches} batches, {stats.agree} agree with the golden model,"
-        f" {stats.errors} error replies, {stats.over_cap} boxes over {p.N} per class not sent"
+    spec, video_paths = source_spec(args.source)
+    settings = Settings(
+        source=spec,
+        imgsz=args.imgsz,
+        conf=args.conf,
+        board=BOARD_MODEL if args.no_board else BOARD_FPGA,
     )
-    return EXIT_OK if stats.agree == stats.batches else EXIT_FAIL
+    board = GoldenBoard() if args.no_board else BoardLink(args.port)
+    if board.state == OFFLINE:
+        print(f"board offline: {board.error} (retrying every 2 s; or use --no-board)")
+    detector = Detector(args.weights)
+    software = None if args.no_software else SoftwareNMS()
+    pipeline = Pipeline(detector, detector.names, board, software)
+    open_source = opener(video_paths)
+    records: list[FrameRecord] = []
+
+    if args.headless:
+        try:
+            source = open_source(spec)
+        except OSError as exc:
+            print(exc)
+            return EXIT_USAGE
+        try:
+            run_headless(pipeline, source, settings, args.frames or 100, records)
+        finally:
+            source.close()
+            board.close()
+        if args.record:
+            with args.record.open("a") as f:
+                f.writelines(r.to_json() + "\n" for r in records)
+    else:
+        from PySide6.QtWidgets import QApplication
+
+        from demo.app import MainWindow
+        from demo.worker import Worker
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        worker = Worker(pipeline, open_source, settings)
+        window = MainWindow(
+            worker,
+            video_paths,
+            record=args.record,
+            save=args.save,
+            frames=args.frames,
+            on_record=records.append,
+        )
+        window.showMaximized()
+        worker.start()
+        app.exec()
+
+    line, totals = summary(records)
+    print(line)
+    return EXIT_FAIL if totals.mismatched else EXIT_OK
 
 
 if __name__ == "__main__":
