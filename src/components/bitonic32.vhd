@@ -8,6 +8,41 @@
 --       for i in 0 .. N-1 where bit jj of i is clear
 --         compare-exchange i with (i xor jj), descending when bit kk of i is set
 --
+-- kk is the size of the bitonic merge being built, jj the compare stride within it. Each
+-- (kk, jj) pair is one sub-stage s, numbered in schedule order:
+--
+--   ┌─────┬────────────────┬─────────────────────┐
+--   │ kk  │   jj values    │ sub-stage numbers s │
+--   ├─────┼────────────────┼─────────────────────┤
+--   │ 2   │ 1              │ 1                   │
+--   │ 4   │ 2, 1           │ 2, 3                │
+--   │ 8   │ 4, 2, 1        │ 4, 5, 6             │
+--   │ 16  │ 8, 4, 2, 1     │ 7 to 10             │
+--   │ 32  │ 16, 8, 4, 2, 1 │ 11 to 15            │
+--   └─────┴────────────────┴─────────────────────┘
+--
+-- WORKED EXAMPLE, N = 8 (six sub-stages; the N = 32 network is the same pattern, wider):
+--
+--   Lane   s=1 (jj=1)    s=2 (jj=2)    s=3 (jj=1)    s=4 (jj=4)    s=5 (jj=2)    s=6 (jj=1)   Out
+--   0 ────┬──[ASC]──────┬──[ASC]──────┬──[ASC]──────┬──[ASC]──────┬──[ASC]──────┬──[ASC]────── 0
+--         │             │             │             │             │             │
+--   1 ────┴─────────────┼──[ASC]──────┴─────────────┼──[ASC]──────┼──[ASC]──────┴───────────── 1
+--                       │ │                         │ │           │ │
+--   2 ────┬──[DESC]─────┴─┼───────────┬──[ASC]──────┼─┼──[ASC]────┴─┼───────────┬──[ASC]────── 2
+--         │               │           │             │ │ │           │           │
+--   3 ────┴───────────────┴───────────┴─────────────┼─┼─┼──[ASC]────┴───────────┴───────────── 3
+--                                                   │ │ │ │
+--   4 ────┬──[ASC]──────┬──[DESC]─────┬──[DESC]─────┴─┼─┼─┼───────┬──[ASC]──────┬──[ASC]────── 4
+--         │             │             │               │ │ │       │             │
+--   5 ────┴─────────────┼──[DESC]─────┴───────────────┴─┼─┼───────┼──[ASC]──────┴───────────── 5
+--                       │ │                             │ │       │ │
+--   6 ────┬──[DESC]─────┴─┼───────────┬──[DESC]─────────┴─┼───────┴─┼───────────┬──[ASC]────── 6
+--         │               │           │                   │         │           │
+--   7 ────┴───────────────┴───────────┴───────────────────┴─────────┴───────────┴───────────── 7
+--
+-- Because alternate blocks sort in opposite directions (see build_dir), every sub-stage
+-- pairs i with i + jj at one uniform stride; no mirrored "butterfly" comparison is needed.
+--
 -- OUTPUT IS ASCENDING. The rank table therefore reads it reversed --
 -- index_table(r) = idx(keys_out(N-1-r)) -- because rank 0 is the highest key. Getting
 -- that backwards is the wiring error the sorter testbench instantiates the real network to catch.
@@ -62,18 +97,17 @@ architecture rtl of bitonic32 is
 
     subtype substage_range is natural range 1 to SORT_SUBSTAGES;
 
-    type net_t  is array (0 to SORT_SUBSTAGES) of key_array_t;
-    type comb_t is array (substage_range) of key_array_t;
+    type net_t  is array (0 to SORT_SUBSTAGES) of key_array_t;  -- keys after each sub-stage
+    type comb_t is array (substage_range) of key_array_t;       -- each sub-stage's CAS outputs
     type dir_t  is array (substage_range) of std_logic_vector(0 to N - 1);
 
-    -- The (kk, jj) pair belonging to sub-stage s, by walking the schedule. Both are pure
-    -- and called only to initialise constants, so they cost nothing at run time.
+    -- The (kk, jj) pair belonging to sub-stage s, by walking the schedule (table in the
+    -- header). Both are pure and called only to initialise constants, so they cost nothing
+    -- at run time.
     function stage_kk (s : substage_range) return natural is
-        -- calculates the outer stage size given the substage
-
-        variable idx : natural := 0; -- global substage counter 
-        variable kk  : natural := 2; -- current bitonic merger size
-        variable jj  : natural; -- butterfly stride / comparision offset
+        variable idx : natural := 0;  -- global sub-stage counter
+        variable kk  : natural := 2;  -- current bitonic merge size
+        variable jj  : natural;       -- compare stride within the merge
     begin
         while kk <= N loop
             jj := kk / 2;
@@ -90,10 +124,9 @@ architecture rtl of bitonic32 is
     end function stage_kk;
 
     function stage_jj (s : substage_range) return natural is
-        -- calculates the butterfly stride comparision length given the substage
-        variable idx : natural := 0;
-        variable kk  : natural := 2;
-        variable jj  : natural;
+        variable idx : natural := 0;  -- global sub-stage counter
+        variable kk  : natural := 2;  -- current bitonic merge size
+        variable jj  : natural;       -- compare stride within the merge
     begin
         while kk <= N loop
             jj := kk / 2;
@@ -109,14 +142,27 @@ architecture rtl of bitonic32 is
         return 0;
     end function stage_jj;
 
-    -- Direction per (sub-stage, lane): descending when bit kk of the index is set. jj is
+    -- Direction per (sub-stage, lane): descending when bit kk of the index is set. kk is
     -- a power of two, so "bit kk of i" is (i / kk) mod 2 -- VHDL-93 has no integer `and`.
+    --
+    -- Why alternate? A bitonic merge only works on a "bitonic" sequence (up then down). To
+    -- build one, each merge stage sorts neighbouring blocks of kk lanes in opposite
+    -- directions: block 0 ascending, block 1 descending, block 2 ascending, ...
+    --
+    --   kk = 2  : lanes 0 1 | 2 3 | 4 5 | 6 7 ...  ->  0 0 1 1 0 0 1 1 ...
+    --   kk = 4  : lanes 0..3 | 4..7 | 8..11 ...    ->  0000 1111 0000 1111 ...
+    --   kk = 32 : one block covers every lane      ->  all 0 (the final merge is ascending)
+    --
+    -- Evaluated once at elaboration to build the constant DIR, so it costs no hardware.
     function build_dir return dir_t is
-        -- ensures the lines form valid bitonic merge sequences (000s -> 111s) then only the bitonic sorting is applicable
+        -- m is the table being built: m(s)(i) = direction of lane i in sub-stage s,
+        -- where '0' = ascending and '1' = descending. It starts all ascending.
         variable m : dir_t := (others => (others => '0'));
     begin
-        for s in substage_range loop
-            for i in 0 to N - 1 loop
+        for s in substage_range loop          -- every sub-stage of the network
+            for i in 0 to N - 1 loop          -- every lane (one key per lane)
+                -- (i / kk) is the index of the kk-sized block that lane i sits in;
+                -- odd-numbered blocks sort descending, even-numbered stay ascending.
                 if (i / stage_kk(s)) mod 2 = 1 then
                     m(s)(i) := '1';
                 end if;
@@ -125,15 +171,16 @@ architecture rtl of bitonic32 is
         return m;
     end function build_dir;
 
-    -- Where the register cuts go. An explicit CUT_AFTER wins; otherwise spread PIPE_CUTS
-    -- cuts evenly by sub-stage count, cut c landing after ceil((c+1)*SUBSTAGES/(CUTS+1)).
-    -- At PIPE_CUTS = 2 that is after sub-stages 5 and 10, as docs/design/architecture.md states.
+    -- Where the pipeline register cuts go. An explicit CUT_AFTER mask wins; otherwise spread
+    -- PIPE_CUTS cuts evenly by sub-stage count, cut c landing after
+    -- ceil((c+1)*SUBSTAGES/(CUTS+1)). At PIPE_CUTS = 2 that is after sub-stages 5 and 10, as docs/design/architecture.md states.
     function build_cuts return std_logic_vector is
         variable m : std_logic_vector(1 to SORT_SUBSTAGES) := (others => '0');
     begin
         if CUT_AFTER /= (CUT_AFTER'range => '0') then
             return CUT_AFTER;
         end if;
+        -- even spread
         for c in 0 to PIPE_CUTS - 1 loop
             m(((c + 1) * SORT_SUBSTAGES + PIPE_CUTS) / (PIPE_CUTS + 1)) := '1';
         end loop;
@@ -141,7 +188,7 @@ architecture rtl of bitonic32 is
     end function build_cuts;
 
     function popcount (v : std_logic_vector) return natural is
-        -- calculates number of 1s in the vector
+        -- number of '1's in v
         variable total : natural := 0;
     begin
         for i in v'range loop
