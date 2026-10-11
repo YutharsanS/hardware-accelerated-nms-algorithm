@@ -148,10 +148,12 @@ begin
                 wait for 1 ns;
             end loop;
             we <= '0';
-            assert settled = '0'
-                report tag & ": settled straight after the last write; the last area "
-                     & "should still be in flight (SETTLE = " & integer'image(SETTLE) & ")"
-                severity error;
+            -- EXPERIMENT (area-single-cycle): box_store's area lands on the write edge and
+            -- settled is tied high, so no area is ever in flight here.
+            -- assert settled = '0'
+            --     report tag & ": settled straight after the last write; the last area "
+            --          & "should still be in flight (SETTLE = " & integer'image(SETTLE) & ")"
+            --     severity error;
             for e in 1 to SETTLE loop
                 wait until rising_edge(clk);
                 wait for 1 ns;

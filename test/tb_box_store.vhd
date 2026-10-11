@@ -170,12 +170,15 @@ begin
             we <= '0';
             assert row_rec = recs(slot)
                 report name & ": record not visible after its write edge" severity error;
-            assert settled = '0'
-                report name & ": settled high with an area still in flight" severity error;
-            assert row_area = old_area
-                report name & ": area changed on the write edge itself; the multiplier "
-                     & "stage is missing, so the area would race the record"
-                severity error;
+            -- EXPERIMENT (area-single-cycle): the area now lands on the write edge and
+            -- settled is tied high, so these two checks of the two-cycle pipeline no
+            -- longer apply.
+            -- assert settled = '0'
+            --     report name & ": settled high with an area still in flight" severity error;
+            -- assert row_area = old_area
+            --     report name & ": area changed on the write edge itself; the multiplier "
+            --          & "stage is missing, so the area would race the record"
+            --     severity error;
             wait until rising_edge(clk);
             wait for 1 ns;
             assert row_area = areas(slot)

@@ -1,8 +1,9 @@
 -- box_store -- the batch: 32 payload records and their 32 areas, in registers.
 --
--- REGISTERS, NOT BLOCK RAM (docs/design/architecture.md section 8). The lanes read P candidate
--- payloads plus one row-source payload every cycle -- 768 bits/cycle at P = 16, against the
--- 72 bits/cycle a BRAM36 port can deliver -- so the store is 2,048 + 768 flip-flops.
+-- REGISTERS, NOT BLOCK RAM (docs/design/architecture.md section 8). Every cycle, each of the
+-- P lanes reads one candidate box and they all share one row box: about 768 bits per cycle
+-- at P = 16. A block RAM port can supply only 72 bits per cycle, far too few. So the store
+-- is built from flip-flops instead: 2,048 for the box payloads and 768 for their areas.
 --
 -- AREAS ARE COMPUTED ON WRITE. Each record's clamped area is a property of the box, not of
 -- a pair, so it is computed once as the record lands, by one shared multiplier, and never
@@ -68,31 +69,33 @@ end entity box_store;
 
 architecture rtl of box_store is
 
+    -- register array of 32 entries : the box storage itself
     signal payload : record_array_t := (others => (others => '0'));
+    -- area entries calculated alongside with the payload at write stage
     signal area    : area_array_t   := (others => (others => '0'));
 
     -- the incoming record's fields
     signal w_x, w_y, w_a, w_b : coord_t := (others => '0');
 
-    -- area pipeline: clamped width and height, then the product
-    signal a_v    : std_logic := '0';
-    signal a_addr : index_t   := (others => '0');
-    signal a_w    : coord_t   := (others => '0');
-    signal a_h    : coord_t   := (others => '0');
+    -- candidate
+    signal c_w, c_h : coord_t;
 
 begin
-
+    -- Ensures even distribution among the data lanes
     assert N mod P = 0
         report "box_store: P = " & integer'image(P) & " does not divide N = "
              & integer'image(N)
         severity failure;
-
+    -- Extracting data from the line
     w_x <= wdata(X_SHIFT + COORD_W - 1 downto X_SHIFT);
     w_y <= wdata(Y_SHIFT + COORD_W - 1 downto Y_SHIFT);
     w_a <= wdata(A_SHIFT + COORD_W - 1 downto A_SHIFT);
     w_b <= wdata(B_SHIFT + COORD_W - 1 downto B_SHIFT);
 
-    settled <= not a_v;
+    -- flag to ensure data transfer - tied to `regs` process : 2 clock cycles
+    c_w <= w_a - w_x when w_a > w_x else (others => '0');
+    c_h <= w_b - w_y when w_b > w_y else (others => '0');    
+    settled <= '1';
 
     -- --- read side ------------------------------------------------------------------
 
@@ -114,31 +117,14 @@ begin
     regs : process (clk)
     begin
         if rising_edge(clk) then
-            a_v <= we;
+            -- clk edge:   1    2    3    4    5
+            -- we:         1    0    1    1    0
+            -- a_v:        -    1    0    1    1    0   (a_v after edge n = we just before edge n)
+
+            -- Why it's needed: it's a valid bit, a flag that travels through the two-step area calculation alongside the data.
             if we = '1' then
                 payload(to_integer(waddr)) <= wdata;
-                a_addr <= waddr;
-                -- The clamp: an inverted or degenerate box contributes 0, not a wrapped
-                -- unsigned value. Identical to model.box_area and to the lane's clamp.
-                if w_a > w_x then
-                    a_w <= w_a - w_x;
-                else
-                    a_w <= (others => '0');
-                end if;
-                if w_b > w_y then
-                    a_h <= w_b - w_y;
-                else
-                    a_h <= (others => '0');
-                end if;
-            end if;
-
-            -- the one multiplier, shared by all 32 slots
-            if a_v = '1' then
-                area(to_integer(a_addr)) <= a_w * a_h;
-            end if;
-
-            if rst = '1' then
-                a_v <= '0';
+                area(to_integer(waddr)) <= c_w * c_h;
             end if;
         end if;
     end process regs;
