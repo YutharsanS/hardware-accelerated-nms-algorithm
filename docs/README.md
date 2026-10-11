@@ -7,7 +7,7 @@ documents below are grouped by what you want from them.
 
 | document | read it to |
 |---|---|
-| [user_guide.md](user_guide.md) | install the toolchain, simulate, synthesise, program the Basys 3, talk to it, capture T on silicon, and run the benchmarks |
+| [user_guide.md](user_guide.md) | install the toolchain, simulate, synthesise, program the Basys 3, talk to it, capture T on silicon, run the benchmarks and the live demo |
 
 ## Design
 
