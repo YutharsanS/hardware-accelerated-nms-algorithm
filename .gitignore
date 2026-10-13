@@ -103,3 +103,8 @@ xsim.dir/
 # YOLO weights: Ultralytics downloads them into the working directory on first use
 # (make bench LOAD=pipeline|concurrent). Re-downloadable and AGPL-3.0, so never committed.
 *.pt
+
+# Demo: the COCO crowd images, downloaded on first use (python -m demo coco), and run
+# records written by --record. Re-downloadable or regenerated, so never committed.
+demo/data/
+*.jsonl

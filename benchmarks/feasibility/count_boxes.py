@@ -35,20 +35,24 @@ MODELS = ("yolov8n.pt", "yolo11n.pt")
 IMGSZ = 640
 
 
-def raw_predictions(model: YOLO, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def raw_predictions(
+    model: YOLO, image: np.ndarray, imgsz: int = IMGSZ
+) -> tuple[np.ndarray, np.ndarray]:
     """Run the network and return its head output before any filtering.
 
-    Letterboxes to a fixed 640 x 640 (``auto=False``) so every image yields the full 8,400
-    anchors, as the published "8,400 candidates" figure assumes.
+    Letterboxes to a fixed square (``auto=False``) so every image yields the full anchor
+    count: 8,400 at the default 640, as the published "8,400 candidates" figure assumes.
 
     Args:
         model: A loaded detector.
         image: BGR image as read by OpenCV.
+        imgsz: Square input size; a multiple of 32.
 
     Returns:
-        ``(boxes_xyxy, class_scores)`` with shapes ``(8400, 4)`` and ``(8400, 80)``.
+        ``(boxes_xyxy, class_scores)`` in letterboxed pixels, with shapes ``(A, 4)`` and
+        ``(A, 80)``; ``A`` is 8,400 at 640 and 2,100 at 320.
     """
-    letterboxed = LetterBox((IMGSZ, IMGSZ), auto=False)(image=image)
+    letterboxed = LetterBox((imgsz, imgsz), auto=False)(image=image)
     x = (
         torch.from_numpy(letterboxed[:, :, ::-1].transpose(2, 0, 1).copy()).float()
         / 255
@@ -56,7 +60,7 @@ def raw_predictions(model: YOLO, image: np.ndarray) -> tuple[np.ndarray, np.ndar
     with torch.inference_mode():
         out = model.model(x[None])
     pred = out[0] if isinstance(out, (tuple, list)) else out
-    pred = pred[0].T.numpy()  # (8400, 4 + nc)
+    pred = pred[0].T.numpy()  # (A, 4 + nc)
     xywh, scores = pred[:, :4], pred[:, 4:]
     xyxy = np.concatenate(
         [xywh[:, :2] - xywh[:, 2:] / 2, xywh[:, :2] + xywh[:, 2:] / 2], 1

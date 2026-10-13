@@ -14,6 +14,7 @@ that assume it.
 8. [Capture the latency on silicon](#8-capture-the-latency-on-silicon)
 9. [Benchmark against software](#9-benchmark-against-software)
 10. [Conventions and adding code](#10-conventions-and-adding-code)
+11. [Live demo](#11-live-demo)
 
 ---
 
@@ -337,3 +338,84 @@ What was measured, how, and what it shows is in [benchmarks.md](results/benchmar
 - To run a testbench in several configurations, add a `SWEEP_tb_<name>` line: one word per run,
   several `-g` flags for one run joined by commas. A `SWEEP_FULL_tb_<name>` line replaces it under
   `make test-full`.
+
+---
+
+## 11. Live demo
+
+`python -m demo` runs YOLOv8n on live input and sends its raw boxes through the board, one batch
+per class. A window shows the result and the data behind it. The bitstream is the shipped
+`nms_top`, unchanged.
+
+```bash
+make program                                   # §6, then check it with make host
+make demo                                      # webcam 0, board on /dev/ttyUSB1
+make demo SRC=coco                             # COCO crowd images, downloaded once
+make demo SRC="a.mp4 b.mp4"                    # video files, looping
+make demo DEMO_ARGS="--record run.jsonl"       # keep every frame's data ...
+uv run python -m demo.audit run.jsonl          # ... and re-check every reply offline
+make demo DEMO_ARGS=--no-board                 # no board: the golden model, labelled as such
+```
+
+Per frame, the steps are:
+1. YOLOv8n's head output before its own NMS (8,400 anchors at 640 px).
+2. Only boxes above the confidence threshold are kept, one batch per class.
+3. The 32 highest-scoring boxes per class are picked with `argpartition`. That is a selection,
+   not a sort, so the board's sorter still does the sorting.
+4. The frame's batches are sent back to back (`Board.transact_many`), and a `keep_mask` comes
+   back for each batch.
+5. Each batch is checked against `model.nms_sequential`, and also timed in OpenCV and
+   torchvision for comparison.
+
+**What the window shows.** Every number comes from the run's own frame records
+(`demo/records.py`), except the one marked otherwise:
+
+| on screen | what it is | source |
+|---|---|---|
+| left panel | every box YOLOv8n produced above the threshold | this frame |
+| right panel | the boxes the board kept. "Board offline" when no reply came: nothing is drawn, and nothing stands in for the board | this frame's reply |
+| [A] | the last completed frame, from capture to screen, as a to-scale bar. Stages: frame age at read, YOLOv8n, batch, **board round trip (UART + FPGA)**, golden check, software NMS, to window, paint. Also shows camera frames dropped, and the source's frame interval | timestamps on one clock, this run |
+| [B] | capture to screen, YOLOv8n, and the board round trip over the last 100 frames; dashed lines mark settings changes | this run |
+| [C] | OpenCV and torchvision NMS time (dots) against the number of boxes in the batch, run on the same batches the board got; the FPGA's 1.13 µs as a dashed line for comparison | dots: `make bench`'s own implementations, this run; dashed line: **measured on silicon (ILA), not in this run**, since the UART cannot resolve it |
+| [D] | the latest batches: class, boxes, kept, reply status, `seq` | this run |
+| status bar | board result = golden model, x/y batches; error replies; batches sent while offline | this run |
+
+**Settings panel:**
+- **Input:** webcam (with its index), video files (Choose…), or COCO crowd images, with
+  previous/next.
+- **Detector:** YOLOv8n input of 640 px or 320 px.
+- **Confidence:** a slider for the threshold.
+- **Run:** Pause, Replay NMS step and Clear stats.
+
+A change applies from the next frame, and every record carries the settings it ran with.
+
+**Keys:** `space` pauses, `n` steps the replay, and `q` quits.
+
+**The replay is software.** The board returns only `keep_mask`: it resolves a batch in 1.13 µs
+and reports no intermediate steps. The replay runs the golden model on the same batch, one box
+at a time, highest score first, and is titled "Software replay (golden model)". Its last step
+equals the board's result.
+
+**Live, not buffered.**
+- The webcam is read by a thread that keeps only the newest frame. The demo therefore shows the
+  present scene, and [A] counts the frames it skipped.
+- One frame is in flight at a time, so capture to screen is the time of one pass.
+- A failed reply marks the board offline, and the port is retried every 2 s.
+
+**Sources:**
+- **COCO crowd** is 24 val2017 images whose busiest class has 20 to 32 candidates, plus 4 with
+  more than 32. They are chosen from `benchmarks/results/feasibility/counts_yolov8n.json` and
+  cached in `demo/data/` (gitignored).
+- **Video files** play every frame, so a clip runs slower than real time.
+- **Still images** are processed again every frame for 5 s each.
+
+It is **not** a speed-up demo: [A] shows where each frame's time goes. YOLOv8n on the CPU takes
+hundreds of milliseconds and the UART milliseconds, against the core's 1.13 µs
+([README](../README.md)).
+
+**Dependencies.**
+- The `demo` extra pulls `ultralytics-opencv-headless` (AGPL-3.0), `pyside6-essentials`
+  (LGPL-3.0) and pyqtgraph (MIT). That is Ultralytics' own distribution built on headless
+  OpenCV, so the project installs exactly one OpenCV, and the window is drawn by Qt.
+- The first run downloads `yolov8n.pt` (6 MB) into the repository root, which `.gitignore`
+  covers.

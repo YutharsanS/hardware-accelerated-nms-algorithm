@@ -23,6 +23,30 @@ silicon.
 
 ---
 
+## Live demo
+
+YOLOv8n runs on the host, and its raw boxes go to the Basys 3 over the UART, one batch per class.
+On the left are the detector's boxes before NMS, and on the right what the board kept. Below
+them are the data: where each frame's time goes, software NMS times on the same batches, and
+every batch the board answered. The status bar counts how many board results equal the golden
+model.
+
+**Oxford Town Centre**, a standard pedestrian-surveillance video, moving crowd (YOLOv8n at 320 px):
+
+![Live demo, Oxford Town Centre video: moving pedestrians, the board's NMS result and the dashboard](docs/images/demo_oxford.gif)
+
+**Webcam:**
+
+![Live demo, webcam: YOLOv8n's raw boxes on the left, the board's NMS result on the right](docs/images/demo_webcam.gif)
+
+**COCO crowd images**:
+
+![Live demo, COCO images: the board's NMS on crowded scenes, with the timing dashboard](docs/images/demo_coco.gif)
+
+Run it with `make demo`; [user guide §11](docs/user_guide.md#11-live-demo).
+
+---
+
 ## Results
 
 Hostile stream (1,000 varied batches of 32 boxes), one core and one thread per software call, every
@@ -125,6 +149,7 @@ source ~/Vivado/2026.1/Vivado/settings64.sh
 make impl && make program         # build and load the bitstream
 make host                         # check it from the host: 20 frames, byte-exact
 make bench                        # benchmark software NMS on this machine
+make demo                         # the live demo: webcam, video or COCO images through the board
 ```
 
 Everything else — waveforms, synthesis, the ILA capture, the benchmark loads — is in the
@@ -142,6 +167,7 @@ test/              self-checking VHDL testbenches (tb_*.vhd), and a simulation s
 models/nms/        golden model, frozen constants, test vectors, wire format, host program
 models/data/       committed test vectors
 benchmarks/        the software benchmark harness, the on-chip latency checker, and every result
+demo/              the live demo: YOLOv8n through the board, in a Qt window of the data
 scripts/           Makefile rules and Vivado Tcl (synthesis, implementation, programming, ILA)
 deployment/        Basys 3 constraints
 docs/              the documentation, below

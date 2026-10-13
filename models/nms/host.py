@@ -27,6 +27,7 @@ import random
 import statistics
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -132,6 +133,45 @@ class Board:
         seq = self.seq
         self.seq = wire.next_seq(seq)
         return self.send_frame(wire.encode_frame(boxes, present_mask, seq), seq)
+
+    def transact_many(
+        self, batches: Sequence[tuple[list[model.Box], int]]
+    ) -> list[wire.Reply]:
+        """Send several batches back to back, then read all their replies.
+
+        Costs one host round trip plus the wire time, instead of one round trip per batch.
+        This is safe because ``frame_rx`` rejects a frame only if the core is still busy
+        when that frame's CRC byte arrives, and the core finishes in 1.13 µs, far less than
+        the 2.64 ms a frame takes on the wire. Each reply still carries its own status.
+
+        Args:
+            batches: ``(boxes, present_mask)`` pairs, as for :meth:`transact`.
+
+        Returns:
+            The decoded replies, in the order the batches were given.
+
+        Raises:
+            ReplyTimeout: If the replies did not all arrive in full.
+        """
+        seqs, frames = [], []
+        for boxes, present_mask in batches:
+            seqs.append(self.seq)
+            frames.append(wire.encode_frame(boxes, present_mask, self.seq))
+            self.seq = wire.next_seq(self.seq)
+        if not frames:
+            return []
+        self._ser.reset_input_buffer()
+        self._ser.write(b"".join(frames))
+        self._ser.flush()
+        want = p.REPLY_BYTES * len(frames)
+        raw = self._ser.read(want)
+        if len(raw) < want:
+            msg = f"only {len(raw)} of {want} reply bytes before the timeout"
+            raise ReplyTimeout(msg)
+        return [
+            wire.decode_reply(raw[i * p.REPLY_BYTES : (i + 1) * p.REPLY_BYTES], seq)
+            for i, seq in enumerate(seqs)
+        ]
 
 
 # --- the FTDI latency timer ---------------------------------------------------------
